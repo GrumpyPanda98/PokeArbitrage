@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PokéArb Japan icon">
+  <rect width="512" height="512" rx="96" fill="#dc2626"/>
+  <path d="M80 256h352" stroke="#ffffff" stroke-width="44" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="92" fill="#ffffff"/>
+  <circle cx="256" cy="256" r="48" fill="#171717"/>
+  <path d="M150 134h212c28 0 50 22 50 50v22H100v-22c0-28 22-50 50-50Z" fill="#ef4444"/>
+  <path d="M100 306h312v22c0 28-22 50-50 50H150c-28 0-50-22-50-50v-22Z" fill="#fafaf9"/>
+  <text x="256" y="455" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="900">¥</text>
+</svg>
