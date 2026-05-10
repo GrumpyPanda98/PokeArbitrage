@@ -14,6 +14,7 @@ const POKEMON_TCG_BASE_URL = "https://api.pokemontcg.io/v2";
 const USD_TO_DKK = 7;
 const EUR_TO_DKK = 7.46;
 const SET_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
+const CARD_QUERY_CACHE_TTL_MS = 1000 * 60 * 10;
 
 type PokemonTcgSet = {
   id: string;
@@ -56,6 +57,10 @@ type PokemonTcgPrice = {
 };
 
 let setCache: { expiresAt: number; sets: PokemonTcgSet[] } | undefined;
+const cardQueryCache = new Map<
+  string,
+  { cards: PokemonTcgCard[]; expiresAt: number }
+>();
 
 export async function searchPokemonTcgCards(
   query: string,
@@ -166,6 +171,11 @@ function buildPokemonTcgQueries(
 }
 
 async function fetchPokemonTcgCards(query: string): Promise<PokemonTcgCard[]> {
+  const cached = cardQueryCache.get(query);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.cards;
+  }
+
   const response = await fetch(
     `${POKEMON_TCG_BASE_URL}/cards?q=${encodeURIComponent(query)}&pageSize=25`,
   );
@@ -174,7 +184,12 @@ async function fetchPokemonTcgCards(query: string): Promise<PokemonTcgCard[]> {
   }
 
   const data = (await response.json()) as { data?: PokemonTcgCard[] };
-  return data.data ?? [];
+  const cards = data.data ?? [];
+  cardQueryCache.set(query, {
+    cards,
+    expiresAt: Date.now() + CARD_QUERY_CACHE_TTL_MS,
+  });
+  return cards;
 }
 
 function mapPokemonTcgCard(card: PokemonTcgCard): CardSearchResult {

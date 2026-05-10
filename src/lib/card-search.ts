@@ -8,6 +8,12 @@ export type CardSearchOptions = {
   preferredLanguage?: CardLanguage;
 };
 
+const CLIENT_SEARCH_CACHE_TTL_MS = 1000 * 60 * 10;
+const clientSearchCache = new Map<
+  string,
+  { expiresAt: number; promise: Promise<CardSearchResult[]> }
+>();
+
 export async function searchCards(
   query: string,
   options: CardSearchOptions = {},
@@ -25,10 +31,26 @@ export async function searchCards(
     params.set("language", options.preferredLanguage);
   }
 
-  const response = await fetch(`/api/card-search?${params.toString()}`);
-  if (!response.ok) {
-    return [];
+  const cacheKey = params.toString();
+  const cached = clientSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.promise;
   }
 
-  return (await response.json()) as CardSearchResult[];
+  const promise = fetch(`/api/card-search?${cacheKey}`)
+    .then((response) => {
+      if (!response.ok) {
+        return [];
+      }
+
+      return response.json() as Promise<CardSearchResult[]>;
+    })
+    .catch(() => []);
+
+  clientSearchCache.set(cacheKey, {
+    expiresAt: Date.now() + CLIENT_SEARCH_CACHE_TTL_MS,
+    promise,
+  });
+
+  return promise;
 }

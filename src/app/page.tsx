@@ -2,8 +2,10 @@
 
 import Image from "next/image";
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -35,7 +37,6 @@ import {
   formatPercent,
   formatSignedMoney,
   formatYen,
-  LANGUAGE_BUCKET_LABELS,
   normalizeSettings,
   normalizeRawCondition,
   optionalNumber,
@@ -405,14 +406,14 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <div className="mx-auto min-h-screen max-w-[428px] px-4 pb-[calc(10.5rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
+      <div className="mx-auto min-h-screen max-w-[428px] px-4 pb-[calc(9.75rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
         <AppHeader
           onRequestLock={() => setConfirmLockOpen(true)}
           setScreen={setScreen}
         />
 
         {notice ? (
-          <div className="mb-3 rounded-xl border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
+          <div className="mb-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
             {notice}
           </div>
         ) : null}
@@ -488,16 +489,8 @@ function PrivateGate({
 }) {
   return (
     <main className="app-shell grid min-h-screen place-items-center px-4 py-8">
-      <section className="card w-full max-w-[428px] p-5">
-        <div className="mb-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
-            Private app
-          </p>
-          <h1 className="mt-1 text-2xl font-bold">PokéArb Japan</h1>
-          <p className="mt-1 text-sm text-muted">
-            Private Japan card deal checker
-          </p>
-        </div>
+      <section className="card w-full max-w-[428px] p-4">
+        <h1 className="mb-4 text-lg font-semibold">PokéArb Japan</h1>
 
         <form className="grid gap-3" onSubmit={unlock}>
           <Field
@@ -507,7 +500,7 @@ function PrivateGate({
             type="password"
             value={passcode}
           />
-          <button className="button-primary h-12" type="submit">
+          <button className="button-primary h-11" type="submit">
             Unlock
           </button>
           {notice ? (
@@ -527,13 +520,13 @@ function AppHeader({
   setScreen: (screen: Screen) => void;
 }) {
   return (
-    <header className="mb-4 flex items-center justify-between">
+    <header className="mb-3 flex items-center justify-between">
       <button
         className="text-left"
         onClick={() => setScreen("home")}
         type="button"
       >
-        <p className="text-lg font-bold leading-6">
+        <p className="text-base font-semibold leading-6">
           PokéArb Japan
         </p>
       </button>
@@ -581,14 +574,14 @@ function HomeScreen({
 
   return (
     <section className="space-y-3">
-      <section className="card px-3 py-2.5">
+      <section className="card px-3 py-2">
         <p className="text-xs text-muted">Approx. conversion</p>
-        <p className="text-base font-bold">
+        <p className="text-sm font-semibold">
           ¥1,000 ≈ {formatMoney(1000 / settings.yenDivisor)}
         </p>
       </section>
 
-      <section className="grid grid-cols-2 gap-3">
+      <section className="grid grid-cols-2 gap-2">
         {actions.map((action) => (
           <HomeAction key={action.screen} {...action} setScreen={setScreen} />
         ))}
@@ -615,13 +608,13 @@ function HomeAction({
   return (
     <button
       aria-label={label}
-      className="card flex min-h-24 flex-col items-start justify-between p-3 text-left"
+      className="card flex min-h-20 flex-col items-start justify-between p-3 text-left"
       onClick={() => setScreen(screen)}
       type="button"
     >
       <Icon className="text-muted" size={20} />
       <span>
-        <span className="block text-sm font-bold">{label}</span>
+        <span className="block text-sm font-semibold">{label}</span>
         {subtitle ? <span className="block text-xs text-muted">{subtitle}</span> : null}
       </span>
     </button>
@@ -650,7 +643,7 @@ function DealCheckScreen({
   settings: AppSettings;
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <InHandConditionSelector
         onChange={(value) => onChange("inHandCondition", value)}
         value={form.inHandCondition}
@@ -663,7 +656,9 @@ function DealCheckScreen({
 
       <section className="card p-3">
         <CardSearchCombobox
+          languageBucket={form.languageBucket}
           onSelectCard={onSelectCard}
+          preferredLanguage={form.cardLanguage}
         />
         {form.cardName ? <SelectedCardSummary form={form} /> : null}
       </section>
@@ -706,7 +701,7 @@ function DealCheckScreen({
         </ActionButton>
       </section>
 
-      <button className="button-secondary h-11 w-full" onClick={onClear} type="button">
+      <button className="button-secondary h-10 w-full" onClick={onClear} type="button">
         <RotateCcw size={16} />
         Clear
       </button>
@@ -725,11 +720,11 @@ function InHandConditionSelector({
 
   return (
     <section className="card p-3">
-      <p className="mb-2 text-sm font-semibold text-text">In hand</p>
+      <p className="mb-2 text-xs font-medium text-muted">In hand</p>
       <div className="grid grid-cols-3 gap-2">
         {options.map((option) => (
           <button
-            className={`h-11 rounded-xl text-sm font-bold ${
+            className={`h-10 rounded-lg text-sm font-semibold ${
               value === option
                 ? "bg-text text-background"
                 : "border border-border bg-strong text-muted"
@@ -760,7 +755,6 @@ function DealPhotoScanner({
 }) {
   const [cardError, setCardError] = useState("");
   const [cardResults, setCardResults] = useState<CardSearchResult[]>([]);
-  const [scanCandidates, setScanCandidates] = useState<CardScanCandidate[]>([]);
   const [detectedCardLabel, setDetectedCardLabel] = useState("");
   const [detectedPrice, setDetectedPrice] = useState<number | undefined>();
   const [message, setMessage] = useState("");
@@ -773,10 +767,9 @@ function DealPhotoScanner({
 
     setCardError("");
     setCardResults([]);
-    setScanCandidates([]);
     setDetectedCardLabel("");
     setDetectedPrice(undefined);
-    setMessage("Scanning one photo for card and shop price...");
+    setMessage("Scanning...");
     setScanning(true);
 
     try {
@@ -799,7 +792,6 @@ function DealPhotoScanner({
           ? best.card
           : undefined;
 
-      setScanCandidates(candidates);
       setDetectedCardLabel(
         best?.card
           ? `${best.card.name} (${confidenceLabel(best.confidence)})`
@@ -817,13 +809,13 @@ function DealPhotoScanner({
       }
 
       if (cards.length === 0) {
-        setCardError("No card matches found. Search manually.");
+        setCardError("No card matches.");
         setMessage(
           [
             cloudWarning(cloudResult, cloud),
             detectedYen ? `Detected ${formatYen(detectedYen)}.` : "",
             priceWarning(localTextResult, priceScan),
-            "Search the card manually.",
+            "Search manually.",
           ]
             .filter(Boolean)
             .join(" "),
@@ -834,10 +826,10 @@ function DealPhotoScanner({
       setMessage(
         [
           autoSelectCard
-            ? `Selected ${autoSelectCard.name}. Use another match below if needed.`
-            : "Pick the exact card match.",
+            ? `Selected ${autoSelectCard.name}.`
+            : "Pick a match.",
           detectedYen
-            ? `Price OCR added ${formatYen(detectedYen)}.`
+            ? `Price ${formatYen(detectedYen)}.`
             : priceWarning(localTextResult, priceScan),
           cloudWarning(cloudResult, cloud),
         ]
@@ -845,7 +837,7 @@ function DealPhotoScanner({
           .join(" "),
       );
     } catch {
-      setMessage("Could not scan the photo. Search and enter manually.");
+      setMessage("Scan failed. Search manually.");
     } finally {
       setScanning(false);
     }
@@ -869,22 +861,15 @@ function DealPhotoScanner({
     onSelectCard(card);
     setCardResults([]);
     setCardError("");
-    setScanCandidates([]);
     setDetectedCardLabel("");
-    setMessage(detectedPrice ? "Card selected. Confirm the detected price." : "Card selected.");
+    setMessage(detectedPrice ? "Card selected. Confirm price." : "Card selected.");
   }
-
-  const candidateByCardId = new Map(
-    scanCandidates
-      .filter(hasScannedCard)
-      .map((candidate) => [candidate.card.id, candidate]),
-  );
 
   return (
     <section className="card p-3">
-      <label className="button-primary h-12 w-full">
+      <label className="button-primary h-11 w-full">
         <Camera size={17} />
-        {scanning ? "Scanning..." : "Scan card + price"}
+        {scanning ? "Scanning" : "Scan card + price"}
         <input
           accept="image/*"
           capture="environment"
@@ -900,15 +885,15 @@ function DealPhotoScanner({
       </label>
 
       {message ? (
-        <p className="mt-3 rounded-xl border border-border bg-strong px-3 py-2 text-xs font-semibold text-muted">
+        <p className="mt-3 rounded-lg border border-border bg-strong px-3 py-2 text-xs font-medium text-muted">
           {message}
         </p>
       ) : null}
 
       {detectedPrice ? (
-        <div className="mt-3 rounded-xl border border-text/25 bg-strong p-3">
+        <div className="mt-3 rounded-lg border border-text/25 bg-strong p-3">
           <p className="text-xs font-semibold text-muted">Detected shop price</p>
-          <p className="mt-1 text-2xl font-bold">{formatYen(detectedPrice)}</p>
+          <p className="mt-1 text-xl font-semibold">{formatYen(detectedPrice)}</p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <button
               className="button-secondary h-10"
@@ -929,9 +914,9 @@ function DealPhotoScanner({
       ) : null}
 
       {detectedCardLabel || cardError || cardResults.length > 0 ? (
-        <div className="mt-3 rounded-xl border border-border bg-background">
+        <div className="mt-3 rounded-lg border border-border bg-background">
           <div className="border-b border-border px-3 py-2">
-            <p className="text-xs font-semibold text-muted">
+            <p className="text-xs font-medium text-muted">
               {detectedCardLabel
                 ? `Detected card: ${detectedCardLabel}`
                 : "Card matches"}
@@ -949,16 +934,10 @@ function DealPhotoScanner({
             >
               <CardThumb imageUrl={card.imageUrl} name={card.name} />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-bold">{card.name}</span>
+                <span className="block truncate text-sm font-semibold">{card.name}</span>
                 <span className="block truncate text-xs text-muted">
                   {[card.setName, card.cardNumber].filter(Boolean).join(" - ")}
                 </span>
-                {candidateByCardId.get(card.id) ? (
-                  <span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-secondary">
-                    {scanSourceLabel(candidateByCardId.get(card.id)?.source)} ·{" "}
-                    {confidenceLabel(candidateByCardId.get(card.id)?.confidence ?? 0)}
-                  </span>
-                ) : null}
               </span>
             </button>
           ))}
@@ -969,49 +948,85 @@ function DealPhotoScanner({
 }
 
 function CardSearchCombobox({
+  languageBucket,
   onSelectCard,
+  preferredLanguage,
 }: {
+  languageBucket: LanguageBucket;
   onSelectCard: (card: CardSearchResult) => void;
+  preferredLanguage: CardLanguage;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CardSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  const searchSequence = useRef(0);
+
+  const runSearch = useCallback(async (value: string, emptyMessage: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length < 2) {
+      if (emptyMessage) {
+        setError(emptyMessage);
+      }
+      setResults([]);
+      setOpen(Boolean(emptyMessage));
+      return;
+    }
+
+    const sequence = searchSequence.current + 1;
+    searchSequence.current = sequence;
+    setLoading(true);
+    setError("");
+    setOpen(true);
+    try {
+      const cards = await searchCards(trimmed, {
+        languageBucket,
+        preferredLanguage,
+      });
+      if (sequence !== searchSequence.current) {
+        return;
+      }
+
+      setResults(cards);
+      if (cards.length === 0) {
+        setError("No matches. Tap Edit values for manual entry.");
+      }
+    } catch {
+      if (sequence !== searchSequence.current) {
+        return;
+      }
+
+      setResults([]);
+      setError("Card search failed. Manual entry still works.");
+    } finally {
+      if (sequence === searchSequence.current) {
+        setLoading(false);
+      }
+    }
+  }, [languageBucket, preferredLanguage]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.length < 3) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void runSearch(query, "");
+    }, 350);
+
+    return () => window.clearTimeout(timeout);
+  }, [query, runSearch]);
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await runSearch(query, "Enter at least 2 characters.");
   }
 
-  async function runSearch(value: string, emptyMessage: string) {
-    const trimmed = value.trim();
-    if (trimmed.length < 2) {
-      setError(emptyMessage);
-      setResults([]);
-      setOpen(true);
-      return;
-    }
-
-    setLoading(true);
-    setError("");
-    setOpen(true);
-    try {
-      const cards = await searchCards(trimmed);
-      setResults(cards);
-      if (cards.length === 0) {
-        setError("No matches. Tap Edit values for manual entry.");
-      }
-    } catch {
-      setResults([]);
-      setError("Card search failed. Manual entry still works.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   function select(card: CardSearchResult) {
     onSelectCard(card);
+    searchSequence.current += 1;
     setQuery("");
     setOpen(false);
     setResults([]);
@@ -1024,7 +1039,7 @@ function CardSearchCombobox({
         <label className="min-w-0 flex-1">
           <span className="sr-only">Search card</span>
           <input
-            className="input-shell h-12 w-full rounded-xl px-3 text-base outline-none focus:border-text"
+            className="input-shell h-11 w-full rounded-lg px-3 text-base outline-none focus:border-text"
             onChange={(event) => setQuery(event.target.value)}
             onFocus={() => {
               if (results.length > 0 || error) setOpen(true);
@@ -1033,13 +1048,13 @@ function CardSearchCombobox({
             value={query}
           />
         </label>
-        <button className="button-primary h-12 w-12 px-0" disabled={loading} type="submit">
+        <button className="button-primary h-11 w-11 px-0" disabled={loading} type="submit">
           <Search size={18} />
         </button>
       </form>
 
       {open ? (
-        <div className="absolute inset-x-0 top-[3.25rem] z-40 max-h-80 overflow-auto rounded-xl border border-border bg-elevated shadow-xl">
+        <div className="absolute inset-x-0 top-12 z-40 max-h-80 overflow-auto rounded-lg border border-border bg-elevated">
           {loading ? (
             <p className="px-3 py-3 text-sm text-muted">Searching...</p>
           ) : null}
@@ -1056,12 +1071,9 @@ function CardSearchCombobox({
                 >
                   <CardThumb imageUrl={card.imageUrl} name={card.name} />
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold">{card.name}</span>
+                    <span className="block truncate text-sm font-semibold">{card.name}</span>
                     <span className="block truncate text-xs text-muted">
                       {[card.setName, card.cardNumber].filter(Boolean).join(" - ")}
-                    </span>
-                    <span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-secondary">
-                      {languageBucketLabel(card.language)} / {card.language.toUpperCase()}
                     </span>
                   </span>
                 </button>
@@ -1075,10 +1087,10 @@ function CardSearchCombobox({
 
 function SelectedCardSummary({ form }: { form: DealForm }) {
   return (
-    <div className="mt-3 flex items-center gap-3 rounded-xl border border-border bg-surface p-2">
+    <div className="mt-3 flex items-center gap-3 rounded-lg border border-border bg-surface p-2">
       <CardThumb imageUrl={form.imageUrl} name={form.cardName} />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-bold">{form.cardName}</p>
+        <p className="truncate text-sm font-semibold">{form.cardName}</p>
         <p className="truncate text-xs text-muted">
           {[form.setName, form.cardNumber].filter(Boolean).join(" - ")}
         </p>
@@ -1097,13 +1109,13 @@ function ShopPriceInput({
   value: string;
 }) {
   return (
-    <section className="card p-4">
+    <section className="card p-3">
       <label>
-        <span className="text-sm font-semibold text-text">Shop price</span>
-        <span className="mt-2 flex h-14 items-center rounded-xl border border-border bg-background px-3">
-          <span className="mr-2 text-xl font-bold text-muted">¥</span>
+        <span className="text-xs font-medium text-muted">Shop price</span>
+        <span className="mt-2 flex h-12 items-center rounded-lg border border-border bg-background px-3">
+          <span className="mr-2 text-lg font-semibold text-muted">¥</span>
           <input
-            className="w-full bg-transparent text-2xl font-bold outline-none placeholder:text-secondary"
+            className="w-full bg-transparent text-xl font-semibold outline-none placeholder:text-secondary"
             inputMode="numeric"
             onChange={(event) => onChange(event.target.value)}
             placeholder="10,000"
@@ -1111,9 +1123,9 @@ function ShopPriceInput({
           />
         </span>
       </label>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <p className="text-sm text-muted">
-          Cost: <span className="font-bold text-text">{formatMoney(costDkk)}</span>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <p className="text-xs text-muted">
+          Cost: <span className="font-semibold text-text">{formatMoney(costDkk)}</span>
         </p>
       </div>
     </section>
@@ -1133,31 +1145,32 @@ function MainDecisionCard({
       ? "Enter shop price"
       : calculation.displayState === "missing"
         ? "Add reference value"
-        : `${calculation.decision} - ${calculation.route?.label ?? CONDITION_LABELS[condition]}`;
+        : calculation.route?.label ?? CONDITION_LABELS[condition];
 
   return (
-    <section className="card p-4">
+    <section className="card p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-muted">Result</p>
+          <p className="text-xs font-medium text-muted">Result</p>
           <p
-            className={`mt-1 text-2xl font-black ${
+            className={`mt-1 text-xl font-semibold ${
               isReady ? decisionText(calculation.decision) : "text-text"
             }`}
           >
             {headline}
           </p>
         </div>
+        {isReady ? <DecisionBadge decision={calculation.decision} /> : null}
       </div>
 
       {isReady ? (
-        <p className="mt-3 text-2xl font-bold">
+        <p className="mt-3 text-xl font-semibold">
           {formatSignedMoney(calculation.profitDkk)} /{" "}
           {formatPercent(calculation.marginPercent)}
         </p>
       ) : null}
 
-      <dl className="mt-4 grid gap-2 text-sm">
+      <dl className="mt-3 grid text-sm">
         <Fact label="You pay" value={formatMoney(calculation.costDkk)} />
         <Fact
           label="Reference value"
@@ -1167,11 +1180,6 @@ function MainDecisionCard({
           label="Net after 5%"
           value={formatMoney(calculation.netReferenceValueDkk)}
         />
-        <Fact
-          label="Route"
-          value={calculation.route?.label ?? CONDITION_LABELS[condition]}
-        />
-        <Fact label="In hand" value={CONDITION_LABELS[condition]} />
       </dl>
 
       {calculation.warning === "PSA_10_TRAP" ? (
@@ -1187,14 +1195,14 @@ function MainDecisionCard({
       ) : null}
 
       {calculation.warning === "MANUAL_VALUES" ? (
-        <p className="mt-3 text-xs font-semibold text-muted">
-          Manual values are overriding fetched reference prices.
+        <p className="mt-3 text-xs font-medium text-muted">
+          Manual values are active.
         </p>
       ) : null}
 
       {calculation.warning === "HIGH_END_RISK" ? (
         <WarningBox>
-          High-end card - only buy if the margin survives VAT, declaration, and liquidity risk.
+          High-end risk. Margin must survive VAT, declaration, and liquidity.
         </WarningBox>
       ) : null}
     </section>
@@ -1211,9 +1219,9 @@ function RouteResultsPanel({
   }
 
   return (
-    <section className="card p-4">
-      <h3 className="text-sm font-bold">Routes</h3>
-      <div className="mt-3 grid gap-2">
+    <section className="card p-3">
+      <h3 className="text-sm font-semibold">Routes</h3>
+      <div className="mt-2 grid gap-1.5">
         {calculation.routes.map((route) => (
           <RouteResultRow key={route.id} route={route} />
         ))}
@@ -1226,10 +1234,10 @@ function RouteResultRow({ route }: { route: DealRouteResult }) {
   const ready = route.displayState === "ready";
 
   return (
-    <div className="rounded-xl border border-border bg-surface px-3 py-2">
+    <div className="rounded-lg border border-border bg-surface px-3 py-2">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-bold">{route.label}</p>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{route.label}</p>
           <p className="text-xs text-muted">
             Cost {formatMoney(route.costDkk)} / Net {formatMoney(route.netDkk)}
           </p>
@@ -1237,12 +1245,12 @@ function RouteResultRow({ route }: { route: DealRouteResult }) {
         {ready ? (
           <DecisionBadge decision={route.decision} />
         ) : (
-          <span className="rounded-full bg-strong px-2 py-0.5 text-[11px] font-bold text-muted">
+          <span className="rounded-md border border-border bg-strong px-2 py-0.5 text-[11px] font-semibold text-muted">
             Need value
           </span>
         )}
       </div>
-      <p className="mt-2 text-sm font-bold">
+      <p className="mt-1.5 text-sm font-semibold">
         {formatSignedMoney(route.profitDkk)} / {formatPercent(route.marginPercent)}
       </p>
     </div>
@@ -1264,18 +1272,17 @@ function ReferencePricesPanel({
   const gradeRows = gradeReferenceRows(condition, normalizedRawCondition, values);
 
   return (
-    <section className="card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-bold">Reference prices</h3>
+    <section className="card p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Reference prices</h3>
         {reference.isFetching ? (
-          <span className="text-xs font-semibold text-muted">Fetching...</span>
+          <span className="text-xs font-medium text-muted">Fetching...</span>
         ) : null}
       </div>
 
       <div className="grid gap-2">
         <ReferenceRow
           label="Raw"
-          note={rawReferenceNote(values)}
           primary={condition === "raw"}
           value={values.rawDkk}
         />
@@ -1283,27 +1290,14 @@ function ReferencePricesPanel({
           <ReferenceRow
             key={row.label}
             label={row.label}
-            note={row.note}
             primary={row.primary}
             value={row.value}
           />
         ))}
       </div>
 
-      {condition === "raw" && normalizedRawCondition === "NM" ? (
-        <p className="mt-3 rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-muted">
-          PSA 10 is possible from Near Mint, but only if the card is exceptionally clean.
-        </p>
-      ) : null}
-
-      {condition === "raw" && ["PL", "PO"].includes(normalizedRawCondition) ? (
-        <p className="mt-3 rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-muted">
-          Grading is unlikely to help at this condition.
-        </p>
-      ) : null}
-
       {reference.error ? (
-        <p className="mt-3 rounded-xl border border-amber/40 bg-amber/10 px-3 py-2 text-xs font-semibold text-amber">
+        <p className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-xs font-semibold text-amber">
           {reference.error}
         </p>
       ) : null}
@@ -1317,33 +1311,29 @@ function ReferencePricesPanel({
 
 function ReferenceRow({
   label,
-  note,
   primary,
   value,
 }: {
   label: string;
-  note: string;
   primary: boolean;
   value?: number;
 }) {
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2 ${
+      className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${
         primary ? "border-text/40 bg-strong" : "border-border bg-surface"
       }`}
     >
       <div>
         <p className="text-sm font-semibold">{label}</p>
-        {note ? <p className="text-xs text-muted">{note}</p> : null}
       </div>
-      <p className="shrink-0 text-sm font-bold">{formatMoney(value)}</p>
+      <p className="shrink-0 text-sm font-semibold">{formatMoney(value)}</p>
     </div>
   );
 }
 
 type GradeReferenceRow = {
   label: string;
-  note: string;
   primary: boolean;
   value?: number;
 };
@@ -1355,56 +1345,50 @@ function gradeReferenceRows(
 ): GradeReferenceRow[] {
   if (condition === "psa9") {
     return [
-      gradeRow("PSA 9", "", true, values.psa9Dkk, values.psa9Source),
-      gradeRow("PSA 10", "", false, values.psa10Dkk, values.psa10Source),
+      gradeRow("PSA 9", true, values.psa9Dkk),
+      gradeRow("PSA 10", false, values.psa10Dkk),
     ];
   }
 
   if (condition === "psa10") {
     return [
-      gradeRow("PSA 10", "", true, values.psa10Dkk, values.psa10Source),
-      gradeRow("PSA 9", "", false, values.psa9Dkk, values.psa9Source),
+      gradeRow("PSA 10", true, values.psa10Dkk),
+      gradeRow("PSA 9", false, values.psa9Dkk),
     ];
   }
 
   if (rawCondition === "MT") {
     return [
-      gradeRow("PSA 9", "", false, values.psa9Dkk, values.psa9Source),
-      gradeRow("PSA 10", "", false, values.psa10Dkk, values.psa10Source),
+      gradeRow("PSA 9", false, values.psa9Dkk),
+      gradeRow("PSA 10", false, values.psa10Dkk),
     ];
   }
 
   if (rawCondition === "NM") {
     return [
-      gradeRow("PSA 8", "", false, values.psa8Dkk, values.psa8Source),
-      gradeRow("PSA 9", "", false, values.psa9Dkk, values.psa9Source),
-      gradeRow(
-        "PSA 10",
-        "clean only",
-        false,
-        values.psa10Dkk,
-        values.psa10Source,
-      ),
+      gradeRow("PSA 8", false, values.psa8Dkk),
+      gradeRow("PSA 9", false, values.psa9Dkk),
+      gradeRow("PSA 10", false, values.psa10Dkk),
     ];
   }
 
   if (rawCondition === "EX") {
     return [
-      gradeRow("PSA 8", "", false, values.psa8Dkk, values.psa8Source),
-      gradeRow("PSA 9", "", false, values.psa9Dkk, values.psa9Source),
+      gradeRow("PSA 8", false, values.psa8Dkk),
+      gradeRow("PSA 9", false, values.psa9Dkk),
     ];
   }
 
   if (rawCondition === "GD") {
     return [
-      gradeRow("PSA 7", "", false, values.psa7Dkk, values.psa7Source),
-      gradeRow("PSA 8", "", false, values.psa8Dkk, values.psa8Source),
+      gradeRow("PSA 7", false, values.psa7Dkk),
+      gradeRow("PSA 8", false, values.psa8Dkk),
     ];
   }
 
   if (rawCondition === "LP") {
     return [
-      gradeRow("PSA 7", "", false, values.psa7Dkk, values.psa7Source),
+      gradeRow("PSA 7", false, values.psa7Dkk),
     ];
   }
 
@@ -1413,14 +1397,11 @@ function gradeReferenceRows(
 
 function gradeRow(
   label: string,
-  note: string,
   primary: boolean,
   value: number | undefined,
-  source: ReferenceSource | undefined,
 ): GradeReferenceRow {
   return {
     label,
-    note: referenceNote(note, source),
     primary,
     value,
   };
@@ -1440,7 +1421,7 @@ function EditableValuesPanel({
   return (
     <section className="card p-3">
       <button
-        className="flex h-10 w-full items-center justify-between text-sm font-bold"
+        className="flex h-9 w-full items-center justify-between text-sm font-semibold"
         onClick={() => setOpen((current) => !current)}
         type="button"
       >
@@ -1497,20 +1478,18 @@ function EditableValuesPanel({
             <Field label="Store" onChange={(value) => onChange("store", value)} value={form.store} />
             <Field label="City" onChange={(value) => onChange("city", value)} value={form.city} />
           </div>
-          <p className="rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold text-muted">
+          <p className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-muted">
             Store and city are remembered for the next cards until you change them.
           </p>
           <label className="grid gap-1.5">
             <span className="text-xs font-medium text-muted">Notes</span>
             <textarea
-              className="input-shell min-h-20 w-full rounded-xl px-3 py-2 text-base outline-none focus:border-text"
+              className="input-shell min-h-20 w-full rounded-lg px-3 py-2 text-base outline-none focus:border-text"
               onChange={(event) => onChange("notes", event.target.value)}
               value={form.notes}
             />
           </label>
-          <p className="text-xs text-muted">
-            Cost = yen / {settings.yenDivisor}. Manual values override fetched values.
-          </p>
+          <p className="text-xs text-muted">Cost = yen / {settings.yenDivisor}</p>
         </div>
       ) : null}
     </section>
@@ -1537,7 +1516,7 @@ function SourceChips({
       {labels.map((item) => {
         const active = sources.includes(item.source);
         const url = sourceUrls?.[item.source];
-        const className = `inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold ${
+        const className = `inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium ${
           active
             ? "border-text/40 bg-strong text-text"
             : "border-border bg-surface text-secondary"
@@ -1585,15 +1564,15 @@ function HistoryScreen({
   totalBoughtYen: number;
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <ScreenTitle subtitle="Saved shop checks" title="History" />
-      <section className="card p-4">
+      <section className="card p-3">
         <p className="text-sm text-muted">Bought total</p>
-        <p className="mt-1 text-2xl font-bold">{formatYen(totalBoughtYen)}</p>
+        <p className="mt-1 text-xl font-semibold">{formatYen(totalBoughtYen)}</p>
         <p className="text-sm text-muted">{formatMoney(totalBoughtDkk)}</p>
       </section>
 
-      <div className="grid gap-2">
+      <div className="grid gap-1.5">
         {deals.length === 0 ? (
           <EmptyState text="No saved deals yet." />
         ) : (
@@ -1603,7 +1582,7 @@ function HistoryScreen({
                 <div className="flex min-w-0 gap-3">
                   <CardThumb imageUrl={deal.imageUrl} name={deal.cardName} />
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-bold">{deal.cardName}</h3>
+                    <h3 className="truncate text-sm font-semibold">{deal.cardName}</h3>
                     <p className="truncate text-xs text-muted">
                       {[deal.setName, deal.cardNumber].filter(Boolean).join(" - ")}
                     </p>
@@ -1616,7 +1595,7 @@ function HistoryScreen({
               </div>
 
               <div className="mt-3 flex items-center justify-between gap-2">
-                <p className="text-sm font-bold">
+                <p className="text-sm font-semibold">
                   {formatPercent(deal.marginPercent)}
                 </p>
                 <div className="segmented-mini">
@@ -1658,11 +1637,11 @@ function SettingsScreen({
   settings: AppSettings;
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <ScreenTitle subtitle="Simple in-store formula" title="Settings" />
-      <section className="card p-4">
-        <p className="text-sm text-muted">Current formula</p>
-        <p className="mt-1 text-lg font-bold">Cost = yen / {settings.yenDivisor}</p>
+      <section className="card p-3">
+        <p className="text-sm text-muted">Formula</p>
+        <p className="mt-1 text-base font-semibold">Cost = yen / {settings.yenDivisor}</p>
         <p className="text-sm text-muted">
           Net keeps {Math.round((1 - settings.sellingFee) * 100)}% after fee
         </p>
@@ -1671,7 +1650,7 @@ function SettingsScreen({
         </p>
       </section>
 
-      <div className="grid gap-3">
+      <div className="grid gap-2">
         <SettingNumberField
           field="yenDivisor"
           key={`yenDivisor-${settings.yenDivisor}`}
@@ -1695,7 +1674,7 @@ function SettingsScreen({
           value={settings.gradingFeeDkk}
         />
       </div>
-      <button className="button-secondary h-11 w-full" onClick={onReset} type="button">
+      <button className="button-secondary h-10 w-full" onClick={onReset} type="button">
         <RotateCcw size={16} />
         Reset defaults
       </button>
@@ -1786,18 +1765,13 @@ function PsaSlabScreen({
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <ScreenTitle subtitle="Check the cert on PSA" title="PSA Slab" />
 
-      <section className="card p-4">
-        <div className="mb-4 rounded-xl border border-border bg-background p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">
-            PSA cert verification
-          </p>
-          <p className="mt-2 text-sm leading-6 text-muted">
-            Scan the QR/barcode on the label or enter the cert number, then open
-            PSA&apos;s official verification page.
-          </p>
+      <section className="card p-3">
+        <div className="mb-3 rounded-lg border border-border bg-background p-3">
+          <p className="text-xs font-medium text-muted">PSA cert verification</p>
+          <p className="mt-1 text-sm text-muted">Scan or enter the cert number.</p>
         </div>
 
         <Field
@@ -1832,7 +1806,7 @@ function PsaSlabScreen({
         </div>
 
         {scanMessage ? (
-          <p className="mt-3 rounded-xl border border-border bg-strong px-3 py-2 text-xs font-semibold text-muted">
+          <p className="mt-3 rounded-lg border border-border bg-strong px-3 py-2 text-xs font-medium text-muted">
             {scanMessage}
           </p>
         ) : null}
@@ -1845,7 +1819,7 @@ function PsaSlabScreen({
       </section>
 
       <button
-        className="button-secondary h-11 w-full"
+        className="button-secondary h-10 w-full"
         onClick={onOpenDealCheck}
         type="button"
       >
@@ -1873,13 +1847,13 @@ function StickyDecisionBar({
           : "Waiting for value";
 
   return (
-    <section className="fixed inset-x-0 bottom-[calc(5.4rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-[428px] px-4">
-      <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-elevated px-3 py-2">
+    <section className="fixed inset-x-0 bottom-[calc(5.05rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-[428px] px-4">
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-elevated px-3 py-2">
         <div className="min-w-0">
           <p className="text-xs text-muted">
             {formatMoney(calculation.costDkk)} - {CONDITION_LABELS[form.inHandCondition]}
           </p>
-          <p className="truncate text-sm font-bold">
+          <p className="truncate text-sm font-semibold">
             {statusText}
           </p>
         </div>
@@ -1902,14 +1876,14 @@ function BottomNav({
     <>
       <div aria-hidden="true" className="bottom-nav-backdrop" />
       <nav className="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-[428px] px-4 pt-2 safe-bottom">
-        <div className="grid grid-cols-4 rounded-2xl border border-border bg-elevated p-1">
+        <div className="grid grid-cols-4 rounded-lg border border-border bg-elevated p-1">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const active = screen === item.screen;
 
             return (
               <button
-                className={`grid place-items-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold ${
+                className={`grid place-items-center gap-0.5 rounded-md py-2 text-[11px] font-semibold ${
                   active ? "bg-strong text-text" : "text-muted"
                 }`}
                 key={item.screen}
@@ -1942,10 +1916,10 @@ function ConfirmSheet({
 }) {
   return (
     <div className="fixed inset-0 z-[70] grid place-items-end bg-black/60 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-      <section className="w-full max-w-[428px] rounded-2xl border border-border bg-elevated p-4">
+      <section className="w-full max-w-[428px] rounded-lg border border-border bg-elevated p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-bold">{title}</h2>
+            <h2 className="text-base font-semibold">{title}</h2>
             <p className="mt-1 text-sm text-muted">{body}</p>
           </div>
           <button
@@ -1958,10 +1932,10 @@ function ConfirmSheet({
           </button>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <button className="button-secondary h-11" onClick={onCancel} type="button">
+          <button className="button-secondary h-10" onClick={onCancel} type="button">
             Cancel
           </button>
-          <button className="button-danger h-11" onClick={onConfirm} type="button">
+          <button className="button-danger h-10" onClick={onConfirm} type="button">
             <LockKeyhole size={16} />
             {confirmLabel}
           </button>
@@ -1971,11 +1945,10 @@ function ConfirmSheet({
   );
 }
 
-function ScreenTitle({ subtitle, title }: { subtitle?: string; title: string }) {
+function ScreenTitle({ title }: { subtitle?: string; title: string }) {
   return (
     <div>
-      <h2 className="text-2xl font-bold">{title}</h2>
-      {subtitle ? <p className="mt-0.5 text-sm text-muted">{subtitle}</p> : null}
+      <h2 className="text-lg font-semibold">{title}</h2>
     </div>
   );
 }
@@ -1989,7 +1962,7 @@ function CardThumb({
 }) {
   if (!imageUrl) {
     return (
-      <span className="grid size-12 shrink-0 place-items-center rounded-xl border border-border bg-strong text-muted">
+      <span className="grid size-12 shrink-0 place-items-center rounded-lg border border-border bg-strong text-muted">
         <ScanLine size={18} />
       </span>
     );
@@ -2036,7 +2009,7 @@ function Field({
         autoFocus={autoFocus}
         autoCapitalize="none"
         autoCorrect="off"
-        className="input-shell h-11 w-full rounded-xl px-3 text-base outline-none focus:border-text"
+        className="input-shell h-11 w-full rounded-lg px-3 text-base outline-none focus:border-text"
         inputMode={inputMode}
         onBlur={onBlur}
         onChange={(event) => onChange(event.target.value)}
@@ -2086,7 +2059,7 @@ function ActionButton({
 
 function DecisionBadge({ decision }: { decision: Decision }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${decisionBadge(decision)}`}>
+    <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${decisionBadge(decision)}`}>
       {decision}
     </span>
   );
@@ -2103,14 +2076,14 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function WarningBox({ children }: { children: ReactNode }) {
   return (
-    <p className="mt-3 rounded-xl border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-bold text-amber">
+    <p className="mt-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
       {children}
     </p>
   );
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <section className="card p-5 text-center text-sm text-muted">{text}</section>;
+  return <section className="card p-4 text-center text-sm text-muted">{text}</section>;
 }
 
 function decisionBadge(decision: Decision): string {
@@ -2200,13 +2173,6 @@ function priceWarning(
     .join(" ");
 }
 
-function scanSourceLabel(source: CardScanCandidate["source"] | undefined): string {
-  if (source === "gibltcg") return "GiblTCG";
-  if (source === "google-ocr") return "Google OCR";
-  if (source === "local-ocr") return "Local OCR";
-  return "Scan";
-}
-
 function confidenceLabel(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
@@ -2227,65 +2193,10 @@ function languageBucketForCardLanguage(language: string): LanguageBucket | undef
   return LANGUAGE_OPTIONS.asian.includes(language) ? "asian" : "western";
 }
 
-function languageBucketLabel(language: string): string {
-  const bucket = languageBucketForCardLanguage(language);
-  return bucket ? LANGUAGE_BUCKET_LABELS[bucket] : "Other";
-}
-
 function isSupportedCardLanguage(language: string): language is CardLanguage {
   return [...LANGUAGE_OPTIONS.asian, ...LANGUAGE_OPTIONS.western].includes(
     language as CardLanguage,
   );
-}
-
-function referenceNote(note: string, source: ReferenceSource | undefined): string {
-  if (!source) {
-    return note;
-  }
-
-  return note ? `${note} - ${sourceLabel(source)}` : sourceLabel(source);
-}
-
-function rawReferenceNote(values: ReferenceValues): string {
-  const base = referenceNote("", values.rawSource);
-  if (values.rawFilterStatus === "live_filtered") {
-    return "Cardmarket live";
-  }
-
-  if (values.rawFilterStatus === "filtered") {
-    return "Cardmarket filtered";
-  }
-
-  if (values.rawFilterStatus === "fetching_filtered") {
-    return "Fetching filtered Cardmarket price...";
-  }
-
-  if (values.rawFilterStatus === "filtered_unavailable") {
-    return "Filtered Cardmarket price unavailable";
-  }
-
-  if (values.rawFilterStatus === "aggregate") {
-    return "Cardmarket aggregate";
-  }
-
-  if (values.rawFilterStatus === "manual") {
-    return "Manual";
-  }
-
-  return base;
-}
-
-function sourceLabel(source: ReferenceSource): string {
-  const labels: Record<ReferenceSource, string> = {
-    cardmarket: "Cardmarket",
-    ebay: "eBay",
-    manual: "Manual",
-    pokeprices: "PokePrices",
-    pricecharting: "PriceCharting",
-    tcgplayer: "TCGplayer",
-  };
-
-  return labels[source];
 }
 
 function buildReferenceValues(

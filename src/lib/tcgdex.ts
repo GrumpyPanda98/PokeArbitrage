@@ -85,6 +85,7 @@ const ASIAN_SEARCH_LANGUAGES: SearchLanguage[] = ["ja", "ko", "zh-tw", "zh-cn"];
 const WESTERN_SEARCH_LANGUAGES: SearchLanguage[] = ["en", "fr", "de", "es", "it", "pt"];
 const SET_DETAIL_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
 const CARD_DETAIL_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
+const CARD_BRIEFS_CACHE_TTL_MS = 1000 * 60 * 10;
 const setDetailCache = new Map<
   string,
   { expiresAt: number; value: TcgDexSetDetail & { language: SearchLanguage } }
@@ -92,6 +93,13 @@ const setDetailCache = new Map<
 const cardDetailCache = new Map<
   string,
   { expiresAt: number; value: TcgDexCardDetail & { language: SearchLanguage } }
+>();
+const cardBriefsCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: Array<{ card: TcgDexCardBrief; language: SearchLanguage }>;
+  }
 >();
 
 const SET_ALIAS_GROUPS: SetAliasGroup[] = [
@@ -227,15 +235,27 @@ export async function searchTcgDexCards(
       .slice(0, 20);
   }
 
-  const pokemonTcgMatches = await searchPokemonTcgCards(trimmed, parsed);
-  if (isCollectorOnlySearch(parsed) && pokemonTcgMatches.length > 0) {
-    return dedupeResults(pokemonTcgMatches)
-      .sort((a, b) => scoreSearchResult(b, parsed, options) - scoreSearchResult(a, parsed, options))
-      .slice(0, 20);
+  let collectorOnlyPokemonMatches: CardSearchResult[] | undefined;
+  if (isCollectorOnlySearch(parsed)) {
+    collectorOnlyPokemonMatches = await searchPokemonTcgCards(trimmed, parsed);
+    if (collectorOnlyPokemonMatches.length > 0) {
+      return dedupeResults(collectorOnlyPokemonMatches)
+        .sort((a, b) => scoreSearchResult(b, parsed, options) - scoreSearchResult(a, parsed, options))
+        .slice(0, 20);
+    }
   }
 
-  const tcgTrackingMatches = await searchTcgTrackingMatches(parsed);
-  const broadMatches = await searchBroadTcgDexMatches(trimmed, parsed, options);
+  const [
+    pokemonTcgMatches,
+    tcgTrackingMatches,
+    broadMatches,
+  ] = await Promise.all([
+    collectorOnlyPokemonMatches
+      ? Promise.resolve(collectorOnlyPokemonMatches)
+      : searchPokemonTcgCards(trimmed, parsed),
+    searchTcgTrackingMatches(parsed),
+    searchBroadTcgDexMatches(trimmed, parsed, options),
+  ]);
 
   return dedupeResults([
     ...exactSetMatches,
@@ -373,8 +393,28 @@ async function searchDirectCardMatches(
     return [];
   }
 
+  const aliases = orderAliasesForOptions(parsed.setAliases, options);
+  if (parsed.nameTokens.length === 0) {
+    for (const alias of aliases) {
+      const settled = await Promise.allSettled(
+        directCardIds(alias.setId, parsed.localId).map((cardId) =>
+          fetchCardDetail(cardId, alias.language),
+        ),
+      );
+      const matches = settled
+        .flatMap((result) => (result.status === "fulfilled" ? [result.value] : []))
+        .map(mapCardDetail);
+
+      if (matches.length > 0) {
+        return matches;
+      }
+    }
+
+    return [];
+  }
+
   const settled = await Promise.allSettled(
-    orderAliasesForOptions(parsed.setAliases, options).flatMap((alias) =>
+    aliases.flatMap((alias) =>
       directCardIds(alias.setId, parsed.localId).map((cardId) =>
         fetchCardDetail(cardId, alias.language),
       ),
@@ -422,7 +462,7 @@ async function searchBroadTcgDexMatches(
     originalQuery,
   ]).filter((term) => term.length >= 2);
 
-  const requests = searchLanguagesForOptions(options).flatMap((language) => {
+  const requests = broadSearchLanguagesForOptions(options).flatMap((language) => {
     const urls = terms.map(
       (term) =>
         `${TCGDEX_BASE_URL}/${language}/cards?name=${encodeURIComponent(
@@ -499,15 +539,26 @@ async function fetchCardBriefs(
   url: string,
   language: SearchLanguage,
 ): Promise<Array<{ card: TcgDexCardBrief; language: SearchLanguage }>> {
+  const cacheKey = `${language}:${url}`;
+  const cached = cardBriefsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`TCGdex search failed with ${response.status}`);
   }
 
   const data = (await response.json()) as TcgDexCardBrief[];
-  return Array.isArray(data)
+  const value = Array.isArray(data)
     ? data.map((card) => ({ card, language }))
     : [];
+  cardBriefsCache.set(cacheKey, {
+    expiresAt: Date.now() + CARD_BRIEFS_CACHE_TTL_MS,
+    value,
+  });
+  return value;
 }
 
 async function fetchCardDetail(
@@ -757,19 +808,15 @@ function matchesKnownSet(
   );
 }
 
-function searchLanguagesForOptions(options: SearchOptions): SearchLanguage[] {
-  const bucketLanguages =
-    options.languageBucket === "western"
-      ? WESTERN_SEARCH_LANGUAGES
-      : ASIAN_SEARCH_LANGUAGES;
-  const fallbackLanguages =
-    options.languageBucket === "western"
-      ? ASIAN_SEARCH_LANGUAGES
-      : WESTERN_SEARCH_LANGUAGES;
+function broadSearchLanguagesForOptions(options: SearchOptions): SearchLanguage[] {
+  const primaryBucketLanguage =
+    options.languageBucket === "western" ? "en" : "ja";
+
   return uniqueStrings([
     options.preferredLanguage ?? "",
-    ...bucketLanguages,
-    ...fallbackLanguages,
+    primaryBucketLanguage,
+    "en",
+    "ja",
   ]) as SearchLanguage[];
 }
 

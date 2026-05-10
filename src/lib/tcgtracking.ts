@@ -3,6 +3,7 @@ import type { CardSearchResult } from "./tcgdex";
 const TCGTRACKING_BASE_URL = "https://tcgtracking.com/tcgapi/v1";
 const POKEMON_EN_CATEGORY_ID = 3;
 const USD_TO_DKK = 7;
+const SET_CACHE_TTL_MS = 1000 * 60 * 60 * 24;
 
 export type TcgTrackingProduct = {
   id: number;
@@ -46,9 +47,16 @@ type TcgTrackingVariantPricing = {
   mkt?: number;
 };
 
+const setCache = new Map<number, { expiresAt: number; value: TcgTrackingSet }>();
+
 export async function fetchTcgTrackingSet(
   setId: number,
 ): Promise<TcgTrackingSet> {
+  const cached = setCache.get(setId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
   const response = await fetch(
     `${TCGTRACKING_BASE_URL}/${POKEMON_EN_CATEGORY_ID}/sets/${setId}`,
   );
@@ -57,12 +65,17 @@ export async function fetchTcgTrackingSet(
   }
 
   const data = (await response.json()) as TcgTrackingSetResponse;
-  return {
+  const value = {
     id: data.id ?? data.set_id ?? setId,
     name: data.name ?? data.set_name ?? "",
     abbreviation: data.abbreviation ?? data.set_abbr,
     products: data.products ?? [],
   };
+  setCache.set(setId, {
+    expiresAt: Date.now() + SET_CACHE_TTL_MS,
+    value,
+  });
+  return value;
 }
 
 export async function fetchTcgTrackingRawDkk(

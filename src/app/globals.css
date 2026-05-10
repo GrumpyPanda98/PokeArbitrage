@@ -43,7 +43,7 @@ body {
   color: var(--text);
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    "Inter", "Segoe UI", sans-serif;
+    system-ui, sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
@@ -85,14 +85,14 @@ select {
   bottom: 0;
   left: 0;
   z-index: 35;
-  height: calc(6.75rem + env(safe-area-inset-bottom));
+  height: calc(6.35rem + env(safe-area-inset-bottom));
   background: var(--background);
   pointer-events: none;
 }
 
 .card {
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--surface);
 }
 
@@ -112,10 +112,10 @@ select {
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  border-radius: 12px;
+  border-radius: 8px;
   padding-inline: 0.75rem;
   font-size: 0.875rem;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .button-primary {
@@ -142,7 +142,7 @@ select {
   height: 2.5rem;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--background);
   color: var(--text);
 }
@@ -156,7 +156,7 @@ select {
   display: inline-flex;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--surface);
 }
 
@@ -164,7 +164,7 @@ select {
   padding: 0.35rem 0.5rem;
   color: var(--muted);
   font-size: 0.7rem;
-  font-weight: 800;
+  font-weight: 600;
   text-transform: capitalize;
 }
 
