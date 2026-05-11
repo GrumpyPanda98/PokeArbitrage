@@ -1,6 +1,7 @@
 import { scanCardImageServer } from "@/lib/scan-card.server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {

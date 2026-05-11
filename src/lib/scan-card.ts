@@ -1,6 +1,10 @@
 import type { CardSearchResult } from "./tcgdex";
 
-export type CardScanSource = "gibltcg" | "google-ocr" | "local-ocr";
+export type CardScanSource =
+  | "gibltcg"
+  | "google-ocr"
+  | "local-image"
+  | "local-ocr";
 
 export type CardScanEvidence = {
   name?: string;

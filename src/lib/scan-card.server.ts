@@ -1,3 +1,9 @@
+import { execFile } from "child_process";
+import { randomUUID } from "crypto";
+import { access, mkdtemp, rm, writeFile } from "fs/promises";
+import os from "os";
+import path from "path";
+import { promisify } from "util";
 import {
   buildScanSearchQueries,
   extractDealScan,
@@ -26,12 +32,31 @@ type ProviderExtraction = {
 type ScoredCandidate = CardScanCandidate & { score: number };
 
 const DEFAULT_PROVIDER_ORDER: CardScanSource[] = [
+  "local-image",
   "gibltcg",
 ];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_SEARCH_QUERIES = 8;
 const GIBL_BASE_URL = "https://gibltcg.com/api/v1";
 const GIBL_CARD_LIST_TYPES = ["pokemon_japan", "pokemon"];
+const execFileAsync = promisify(execFile);
+
+type LocalMatcherResult = {
+  card?: {
+    id?: string;
+    image_url?: string;
+    language?: string;
+    local_id?: string;
+    name?: string;
+    set_id?: string;
+    set_name?: string;
+  };
+  embedding_similarity?: number;
+  hash_distance?: number;
+  histogram_similarity?: number;
+  orb_similarity?: number;
+  score?: number;
+};
 
 export async function scanCardImageServer(file: File): Promise<CardScanResponse> {
   if (!file.type.startsWith("image/")) {
@@ -44,10 +69,16 @@ export async function scanCardImageServer(file: File): Promise<CardScanResponse>
 
   const providersTried: CardScanSource[] = [];
   const warnings: string[] = [];
+  const directCandidates: CardScanCandidate[] = [];
   const extractions: ProviderExtraction[] = [];
 
   for (const provider of getProviderOrder()) {
     try {
+      if (provider === "local-image") {
+        providersTried.push(provider);
+        directCandidates.push(...(await scanWithLocalImageMatcher(file)));
+      }
+
       if (provider === "gibltcg" && process.env.GIBLTCG_API_KEY) {
         providersTried.push(provider);
         extractions.push(...(await scanWithGiblTcg(file)));
@@ -65,11 +96,14 @@ export async function scanCardImageServer(file: File): Promise<CardScanResponse>
     }
   }
 
-  const candidates = await resolveCandidates(extractions);
+  const candidates = mergeScanCandidates([
+    ...directCandidates,
+    ...(await resolveCandidates(extractions)),
+  ]);
   const psaCert = firstString(extractions.map((item) => item.evidence.psaCert));
 
   if (providersTried.length === 0) {
-    warnings.push("No cloud OCR providers are configured.");
+    warnings.push("No scan providers are configured.");
   }
 
   if (candidates.length === 0) {
@@ -83,6 +117,160 @@ export async function scanCardImageServer(file: File): Promise<CardScanResponse>
     providersTried: uniqueSources(providersTried),
     warnings: uniqueStrings(warnings),
   };
+}
+
+async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[]> {
+  const matcherDir =
+    process.env.LOCAL_CARD_MATCHER_DIR ??
+    path.join(process.cwd(), "tools", "card_matcher");
+  const pythonPath =
+    process.env.LOCAL_CARD_MATCHER_PYTHON ??
+    path.join(os.homedir(), "anaconda3", "envs", "MNE", "python.exe");
+  const cacheDir =
+    process.env.LOCAL_CARD_MATCHER_CACHE_DIR ??
+    path.join(matcherDir, "cache");
+  const indexPath =
+    process.env.LOCAL_CARD_MATCHER_INDEX ??
+    path.join(cacheDir, "ja_image_index.json");
+  const embeddingIndexPath =
+    process.env.LOCAL_CARD_MATCHER_EMBEDDING_INDEX ??
+    path.join(cacheDir, "ja_embeddings_facebook_dinov2-base.npz");
+
+  await assertPathExists(pythonPath, "Local matcher Python was not found");
+  await assertPathExists(path.join(matcherDir, "match_card.py"), "Local matcher script was not found");
+  await assertPathExists(indexPath, "Local matcher image index was not found");
+
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "pokearb-card-"));
+  const tempPath = path.join(tempDir, `scan-${randomUUID()}${extensionForFile(file)}`);
+
+  try {
+    await writeFile(tempPath, Buffer.from(await file.arrayBuffer()));
+
+    const args = [
+      "match_card.py",
+      tempPath,
+      "--index",
+      indexPath,
+      "--top",
+      String(localMatcherTop()),
+      "--json",
+    ];
+
+    if (await pathExists(embeddingIndexPath)) {
+      args.push(
+        "--embedding-index",
+        embeddingIndexPath,
+        "--device",
+        process.env.LOCAL_CARD_MATCHER_DEVICE ?? "cuda",
+      );
+    }
+
+    const { stdout } = await execFileAsync(pythonPath, args, {
+      cwd: matcherDir,
+      env: {
+        ...process.env,
+        PYTHONUTF8: "1",
+      },
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: localMatcherTimeoutMs(),
+      windowsHide: true,
+    });
+
+    return parseLocalMatcherResults(stdout).map(localMatcherResultToCandidate);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
+}
+
+function localMatcherResultToCandidate(result: LocalMatcherResult): CardScanCandidate {
+  const card = result.card ?? {};
+  const confidence = clamp(Number(result.score ?? 0), 0.1, 0.99);
+  const setId = card.set_id ?? "";
+  const localId = card.local_id ?? "";
+  const name = card.name ?? "";
+
+  return {
+    card: {
+      cardNumber: localId,
+      id: card.id ?? `${setId}-${localId}`,
+      imageUrl: card.image_url ?? "",
+      language: card.language ?? "ja",
+      name,
+      setName: card.set_name ?? "",
+      source: "tcgdex",
+      tcgDexSetId: setId,
+    },
+    confidence,
+    evidence: {
+      cardNumber: localId,
+      language: card.language === "en" ? "en" : "ja",
+      name,
+      setCode: setId,
+      setName: card.set_name,
+    },
+    query: [setId, localId, name].filter(Boolean).join(" "),
+    source: "local-image",
+  };
+}
+
+function parseLocalMatcherResults(stdout: string): LocalMatcherResult[] {
+  const start = stdout.indexOf("[");
+  const end = stdout.lastIndexOf("]");
+  if (start === -1 || end === -1 || end <= start) {
+    return [];
+  }
+
+  const parsed = JSON.parse(stdout.slice(start, end + 1)) as unknown;
+  return Array.isArray(parsed) ? (parsed.filter(isRecord) as LocalMatcherResult[]) : [];
+}
+
+async function assertPathExists(value: string, message: string): Promise<void> {
+  if (!(await pathExists(value))) {
+    throw new Error(`${message}: ${value}`);
+  }
+}
+
+async function pathExists(value: string): Promise<boolean> {
+  try {
+    await access(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extensionForFile(file: File): string {
+  if (file.type === "image/png") {
+    return ".png";
+  }
+
+  if (file.type === "image/webp") {
+    return ".webp";
+  }
+
+  return ".jpg";
+}
+
+function localMatcherTop(): number {
+  return intFromEnv("LOCAL_CARD_MATCHER_TOP", 8, 1, 20);
+}
+
+function localMatcherTimeoutMs(): number {
+  return intFromEnv("LOCAL_CARD_MATCHER_TIMEOUT_MS", 120_000, 10_000, 300_000);
+}
+
+function intFromEnv(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const parsed = Number.parseInt(process.env[key] ?? "", 10);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, parsed));
 }
 
 async function scanWithGiblTcg(file: File): Promise<ProviderExtraction[]> {
@@ -526,7 +714,12 @@ function hasSearchEvidence(evidence: CardScanEvidence): boolean {
 }
 
 function isCardScanSource(value: string): value is CardScanSource {
-  return value === "gibltcg" || value === "google-ocr" || value === "local-ocr";
+  return (
+    value === "gibltcg" ||
+    value === "google-ocr" ||
+    value === "local-image" ||
+    value === "local-ocr"
+  );
 }
 
 function inferLanguage(record: Record<string, unknown>): "ja" | "en" | undefined {
@@ -620,4 +813,24 @@ function uniqueSources(values: CardScanSource[]): CardScanSource[] {
 
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function mergeScanCandidates(candidates: CardScanCandidate[]): CardScanCandidate[] {
+  const merged: CardScanCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    const key = candidate.card
+      ? `card:${candidate.card.id}`
+      : `query:${candidate.source}:${candidate.query}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push(candidate);
+  }
+
+  return merged;
 }
