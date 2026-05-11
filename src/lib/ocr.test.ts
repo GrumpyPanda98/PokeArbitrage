@@ -44,6 +44,9 @@ describe("OCR extraction helpers", () => {
   it("does not merge nearby attack damage into yen prices", () => {
     expect(pickBestYenPrice("税込 ¥5,000 80")).toBe(5000);
     expect(pickBestYenPrice("¥5000 80")).toBe(5000);
+    expect(pickBestYenPrice("¥500080")).toBe(5000);
+    expect(pickBestYenPrice("税込 980030")).toBe(9800);
+    expect(pickBestYenPrice("PRICE 1280080")).toBe(12800);
     expect(pickBestYenPrice("税込 5 000 80")).toBe(5000);
     expect(pickBestYenPrice("PRICE I2,8OO 80")).toBe(12800);
     expect(extractYenPrices("税込 ¥5,000 80")).toEqual([5000]);

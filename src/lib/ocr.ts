@@ -41,6 +41,11 @@ type PriceCandidate = {
   index: number;
 };
 
+type ParsedYenCandidate = {
+  value: number;
+  scoreBonus: number;
+};
+
 const OCR_YEN_DIGIT = "[0-9OoIl|SsB]";
 const SEPARATED_YEN_NUMBER = `${OCR_YEN_DIGIT}{1,3}(?:\\s*[,\\.]\\s*${OCR_YEN_DIGIT}{3})+`;
 const SPACE_GROUPED_YEN_NUMBER = `${OCR_YEN_DIGIT}{1,3}(?:\\s+${OCR_YEN_DIGIT}{3})+`;
@@ -210,23 +215,21 @@ function findPriceCandidates(text: string): PriceCandidate[] {
 
   for (const pattern of patterns) {
     for (const match of normalized.matchAll(pattern.regex)) {
-      const value = parseYenToken(match[1]);
-      if (value === undefined) {
-        continue;
+      for (const parsed of parseYenTokenCandidates(match[1])) {
+        candidates.push({
+          value: parsed.value,
+          score: pattern.score + digitScore(parsed.value) + parsed.scoreBonus,
+          index: match.index ?? 0,
+        });
       }
-
-      candidates.push({
-        value,
-        score: pattern.score + digitScore(value),
-        index: match.index ?? 0,
-      });
     }
   }
 
   return candidates.sort((a, b) => b.score - a.score || a.index - b.index);
 }
 
-function parseYenToken(value: string): number | undefined {
+function parseYenTokenCandidates(value: string): ParsedYenCandidate[] {
+  const hasGrouping = /[,.\s]/.test(value);
   const digits = value
     .replace(/[Oo]/g, "0")
     .replace(/[Il|]/g, "1")
@@ -234,15 +237,73 @@ function parseYenToken(value: string): number | undefined {
     .replace(/B/g, "8")
     .replace(/\D/g, "");
   if (digits.length < 3) {
-    return undefined;
+    return [];
   }
 
+  const candidates: ParsedYenCandidate[] = [];
+  const parsed = parseValidYenDigits(digits);
+  if (parsed !== undefined) {
+    candidates.push({ value: parsed, scoreBonus: 0 });
+  }
+
+  if (!hasGrouping) {
+    candidates.push(...splitLikelyRunOnPrice(digits));
+  }
+
+  return uniqueParsedYenCandidates(candidates);
+}
+
+function splitLikelyRunOnPrice(digits: string): ParsedYenCandidate[] {
+  if (digits.length < 5) {
+    return [];
+  }
+
+  const candidates: ParsedYenCandidate[] = [];
+  for (const suffixLength of [2, 3]) {
+    if (digits.length <= suffixLength + 2) {
+      continue;
+    }
+
+    const suffix = Number.parseInt(digits.slice(-suffixLength), 10);
+    const prefix = parseValidYenDigits(digits.slice(0, -suffixLength));
+    if (prefix === undefined || !isLikelyAttackDamageSuffix(suffix)) {
+      continue;
+    }
+
+    candidates.push({
+      value: prefix,
+      scoreBonus: suffixLength === 2 ? 45 : 32,
+    });
+  }
+
+  return candidates;
+}
+
+function parseValidYenDigits(digits: string): number | undefined {
   const parsed = Number.parseInt(digits, 10);
   if (!Number.isFinite(parsed) || parsed < 100 || parsed > 10_000_000) {
     return undefined;
   }
 
   return parsed;
+}
+
+function isLikelyAttackDamageSuffix(value: number): boolean {
+  return value >= 10 && value <= 330 && value % 10 === 0;
+}
+
+function uniqueParsedYenCandidates(
+  candidates: ParsedYenCandidate[],
+): ParsedYenCandidate[] {
+  const best = new Map<number, ParsedYenCandidate>();
+  for (const candidate of candidates) {
+    const current = best.get(candidate.value);
+    if (!current || candidate.scoreBonus > current.scoreBonus) {
+      best.set(candidate.value, candidate);
+    }
+  }
+
+  return Array.from(best.values());
 }
 
 function digitScore(value: number): number {

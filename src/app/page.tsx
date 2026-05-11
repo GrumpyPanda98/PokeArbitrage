@@ -1,14 +1,20 @@
 "use client";
 
+import LiquidGlass from "liquid-glass-react";
 import Image from "next/image";
+import { createPortal } from "react-dom";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   Calculator,
@@ -85,6 +91,8 @@ import type {
 const STORAGE_KEYS = {
   unlocked: "pokearb.unlocked.v1",
   settings: "pokearb.settings.v2",
+  theme: "pokearb.theme.v1",
+  liquidBackground: "pokearb.liquid-background.v1",
   history: "pokearb.deals.v2",
   storeContext: "pokearb.store-context.v1",
 };
@@ -101,6 +109,106 @@ const DEFAULT_STORE_CONTEXT: StoreContext = {
   store: "",
   city: "Tokyo",
 };
+
+type ThemeName = "graphite" | "wooper" | "paper" | "liquid";
+type LiquidBackgroundName =
+  | "psyduck"
+  | "dragonite"
+  | "froakie"
+  | "quagsire"
+  | "typhlosion"
+  | "woah";
+
+const DEFAULT_THEME: ThemeName = "graphite";
+const DEFAULT_LIQUID_BACKGROUND: LiquidBackgroundName = "psyduck";
+const ThemeContext = createContext<ThemeName>(DEFAULT_THEME);
+type LiquidMotionState = {
+  globalMousePos: { x: number; y: number };
+  mouseOffset: { x: number; y: number };
+};
+const DEFAULT_LIQUID_MOTION: LiquidMotionState = {
+  globalMousePos: { x: 1, y: 1 },
+  mouseOffset: { x: 0, y: 0 },
+};
+const LiquidMotionContext = createContext<LiquidMotionState>(
+  DEFAULT_LIQUID_MOTION,
+);
+
+const THEME_OPTIONS: Array<{
+  description: string;
+  name: ThemeName;
+  swatches: string[];
+  title: string;
+}> = [
+  {
+    description: "Flat black",
+    name: "graphite",
+    swatches: ["#000000", "#171717", "#ededed"],
+    title: "Graphite",
+  },
+  {
+    description: "Warm brown",
+    name: "wooper",
+    swatches: ["#16110f", "#2a211c", "#d2b199"],
+    title: "Wooper",
+  },
+  {
+    description: "Bright and plain",
+    name: "paper",
+    swatches: ["#f7f5f0", "#ffffff", "#18130f"],
+    title: "Paper",
+  },
+  {
+    description: "Refracted glass",
+    name: "liquid",
+    swatches: ["#050708", "#20302c", "#eef6ef"],
+    title: "Liquid",
+  },
+];
+
+const LIQUID_BACKGROUND_OPTIONS: Array<{
+  name: LiquidBackgroundName;
+  position: string;
+  src: string;
+  title: string;
+}> = [
+  {
+    name: "psyduck",
+    position: "center center",
+    src: "/backgrounds/psyduck.jpg",
+    title: "Psyduck",
+  },
+  {
+    name: "dragonite",
+    position: "center top",
+    src: "/backgrounds/dragonite.jpg",
+    title: "Dragonite",
+  },
+  {
+    name: "froakie",
+    position: "center center",
+    src: "/backgrounds/froakie.jpg",
+    title: "Froakie",
+  },
+  {
+    name: "quagsire",
+    position: "center bottom",
+    src: "/backgrounds/quagsire.jpg",
+    title: "Quagsire",
+  },
+  {
+    name: "typhlosion",
+    position: "center center",
+    src: "/backgrounds/typhlosion.jpg",
+    title: "Typhlosion",
+  },
+  {
+    name: "woah",
+    position: "center center",
+    src: "/backgrounds/woah.jpg",
+    title: "Woah",
+  },
+];
 
 function makeEmptyDealForm(
   storeContext: StoreContext = DEFAULT_STORE_CONTEXT,
@@ -149,6 +257,27 @@ export default function App() {
   const settings = useMemo(
     () => normalizeSettings(storedSettings),
     [storedSettings],
+  );
+  const [storedTheme, setTheme] = useLocalStorageState<ThemeName>(
+    STORAGE_KEYS.theme,
+    DEFAULT_THEME,
+  );
+  const theme = normalizeTheme(storedTheme);
+  const liquidMotion = useLiquidMotionState(theme === "liquid");
+  const [storedLiquidBackground, setLiquidBackground] =
+    useLocalStorageState<LiquidBackgroundName>(
+      STORAGE_KEYS.liquidBackground,
+      DEFAULT_LIQUID_BACKGROUND,
+    );
+  const liquidBackground = normalizeLiquidBackground(storedLiquidBackground);
+  const selectedLiquidBackground = liquidBackgroundOption(liquidBackground);
+  const liquidBackgroundStyle = useMemo(
+    () =>
+      ({
+        "--liquid-background-image": `url("${selectedLiquidBackground.src}")`,
+        "--liquid-background-position": selectedLiquidBackground.position,
+      }) as CSSProperties,
+    [selectedLiquidBackground],
   );
   const [history, setHistory] = useLocalStorageState<SavedDeal[]>(
     STORAGE_KEYS.history,
@@ -273,7 +402,13 @@ export default function App() {
   ]);
 
   if (!mounted) {
-    return <main aria-hidden="true" className="app-shell min-h-screen" />;
+    return (
+      <main
+        aria-hidden="true"
+        className="app-shell min-h-screen"
+        data-theme={DEFAULT_THEME}
+      />
+    );
   }
 
   function unlock(event: FormEvent<HTMLFormElement>) {
@@ -395,84 +530,323 @@ export default function App() {
 
   if (!unlocked) {
     return (
-      <PrivateGate
-        notice={notice}
-        passcode={passcode}
-        setPasscode={setPasscode}
-        unlock={unlock}
-      />
+      <ThemeContext.Provider value={theme}>
+        <PrivateGate
+          notice={notice}
+          passcode={passcode}
+          setPasscode={setPasscode}
+          style={theme === "liquid" ? liquidBackgroundStyle : undefined}
+          theme={theme}
+          unlock={unlock}
+        />
+      </ThemeContext.Provider>
     );
   }
 
   return (
-    <main className="app-shell">
-      <div className="mx-auto min-h-screen max-w-[428px] px-4 pb-[calc(9.75rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
-        <AppHeader
-          onRequestLock={() => setConfirmLockOpen(true)}
-          setScreen={setScreen}
-        />
+    <ThemeContext.Provider value={theme}>
+      <LiquidMotionContext.Provider value={liquidMotion}>
+        <main
+          className="app-shell"
+          data-liquid-background={liquidBackground}
+          data-theme={theme}
+          style={theme === "liquid" ? liquidBackgroundStyle : undefined}
+        >
+          <div className="app-content mx-auto min-h-screen max-w-[428px] px-4 pb-[calc(14rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
+            <AppHeader
+              onRequestLock={() => setConfirmLockOpen(true)}
+              setScreen={setScreen}
+            />
 
-        {notice ? (
-          <div className="mb-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
-            {notice}
+            {notice ? (
+              <div className="mb-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
+                {notice}
+              </div>
+            ) : null}
+
+            {screen === "home" ? (
+              <HomeScreen setScreen={setScreen} settings={settings} />
+            ) : null}
+
+            {screen === "deal-check" ? (
+              <DealCheckScreen
+                calculation={calculation}
+                form={form}
+                onChange={patchForm}
+                onClear={clearDeal}
+                onSave={saveDeal}
+                onSelectCard={selectCard}
+                reference={reference}
+                referenceValues={referenceValues}
+                settings={settings}
+              />
+            ) : null}
+
+            {screen === "psa" ? (
+              <PsaSlabScreen onOpenDealCheck={() => setScreen("deal-check")} />
+            ) : null}
+
+            {screen === "history" ? (
+              <HistoryScreen
+                deals={history}
+                onDelete={deleteDeal}
+                onStatus={updateDealStatus}
+                totalBoughtDkk={boughtDkk}
+                totalBoughtYen={boughtYen}
+              />
+            ) : null}
+
+            {screen === "settings" ? (
+              <SettingsScreen
+                onChange={updateSetting}
+                onReset={() => setSettings(DEFAULT_SETTINGS)}
+                onLiquidBackgroundChange={setLiquidBackground}
+                onThemeChange={setTheme}
+                liquidBackground={liquidBackground}
+                settings={settings}
+                theme={theme}
+              />
+            ) : null}
           </div>
-        ) : null}
 
-        {screen === "home" ? (
-          <HomeScreen setScreen={setScreen} settings={settings} />
-        ) : null}
+          {screen === "deal-check" && cleanNumber(form.shopPriceYen) > 0 ? (
+            <StickyDecisionBar calculation={calculation} form={form} />
+          ) : null}
+          <BottomNav screen={screen} setScreen={setScreen} />
+          {confirmLockOpen ? (
+            <ConfirmSheet
+              body="You will need to enter the passcode again."
+              confirmLabel="Lock"
+              onCancel={() => setConfirmLockOpen(false)}
+              onConfirm={lock}
+              title="Lock app?"
+            />
+          ) : null}
+        </main>
+      </LiquidMotionContext.Provider>
+    </ThemeContext.Provider>
+  );
+}
 
-        {screen === "deal-check" ? (
-          <DealCheckScreen
-            calculation={calculation}
-            form={form}
-            onChange={patchForm}
-            onClear={clearDeal}
-            onSave={saveDeal}
-            onSelectCard={selectCard}
-            reference={reference}
-            referenceValues={referenceValues}
-            settings={settings}
-          />
-        ) : null}
+function useIsLiquidTheme(): boolean {
+  return useContext(ThemeContext) === "liquid";
+}
 
-        {screen === "psa" ? (
-          <PsaSlabScreen onOpenDealCheck={() => setScreen("deal-check")} />
-        ) : null}
+function useLiquidMotionState(enabled: boolean): LiquidMotionState {
+  const [motion, setMotion] = useState<LiquidMotionState>(
+    DEFAULT_LIQUID_MOTION,
+  );
 
-        {screen === "history" ? (
-          <HistoryScreen
-            deals={history}
-            onDelete={deleteDeal}
-            onStatus={updateDealStatus}
-            totalBoughtDkk={boughtDkk}
-            totalBoughtYen={boughtYen}
-          />
-        ) : null}
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
 
-        {screen === "settings" ? (
-          <SettingsScreen
-            onChange={updateSetting}
-            onReset={() => setSettings(DEFAULT_SETTINGS)}
-            settings={settings}
-          />
-        ) : null}
+    let animationFrame = 0;
+    let lastScrollY = window.scrollY;
+    let lastScrollTime = performance.now();
+    let pointer = {
+      x: window.innerWidth / 2,
+      y: window.innerHeight / 2,
+    };
+
+    function publish(nextPointer = pointer, scrollKick = 0) {
+      pointer = nextPointer;
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const width = Math.max(window.innerWidth, 1);
+        const height = Math.max(window.innerHeight, 1);
+        const offsetX = ((pointer.x / width) - 0.5) * 100;
+        const offsetY = ((pointer.y / height) - 0.5) * 100 + scrollKick;
+
+        setMotion({
+          globalMousePos: {
+            x: Math.max(1, pointer.x),
+            y: Math.max(1, pointer.y),
+          },
+          mouseOffset: {
+            x: clamp(offsetX, -48, 48),
+            y: clamp(offsetY, -48, 48),
+          },
+        });
+      });
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      publish({ x: event.clientX, y: event.clientY });
+    }
+
+    function handleTouchMove(event: TouchEvent) {
+      const touch = event.touches[0];
+      if (!touch) {
+        return;
+      }
+
+      publish({ x: touch.clientX, y: touch.clientY });
+    }
+
+    function handleScroll() {
+      const now = performance.now();
+      const delta = window.scrollY - lastScrollY;
+      const elapsed = Math.max(now - lastScrollTime, 16);
+      lastScrollY = window.scrollY;
+      lastScrollTime = now;
+      publish(pointer, clamp((delta / elapsed) * 60, -32, 32));
+    }
+
+    publish(pointer);
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    window.addEventListener("touchmove", handleTouchMove, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleScroll, { passive: true });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("touchmove", handleTouchMove);
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [enabled]);
+
+  return enabled ? motion : DEFAULT_LIQUID_MOTION;
+}
+
+function CardPanel({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
+  if (!isLiquidTheme) {
+    return <section className={`card ${className}`}>{children}</section>;
+  }
+
+  return (
+    <section
+      className={`liquid-glass-panel ${className}`}
+      ref={(node) => {
+        surfaceRef.current = node;
+      }}
+    >
+      <LiquidGlassSurface
+        cornerRadius={32}
+        mouseContainer={surfaceRef}
+      />
+      <div className="liquid-glass-content">
+        {children}
       </div>
+    </section>
+  );
+}
 
-      {screen === "deal-check" && cleanNumber(form.shopPriceYen) > 0 ? (
-        <StickyDecisionBar calculation={calculation} form={form} />
-      ) : null}
-      <BottomNav screen={screen} setScreen={setScreen} />
-      {confirmLockOpen ? (
-        <ConfirmSheet
-          body="You will need to enter the passcode again."
-          confirmLabel="Lock"
-          onCancel={() => setConfirmLockOpen(false)}
-          onConfirm={lock}
-          title="Lock app?"
-        />
-      ) : null}
-    </main>
+function ArticlePanel({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
+  if (!isLiquidTheme) {
+    return <article className={`card ${className}`}>{children}</article>;
+  }
+
+  return (
+    <article
+      className={`liquid-glass-panel ${className}`}
+      ref={(node) => {
+        surfaceRef.current = node;
+      }}
+    >
+      <LiquidGlassSurface
+        cornerRadius={32}
+        mouseContainer={surfaceRef}
+      />
+      <div className="liquid-glass-content">
+        {children}
+      </div>
+    </article>
+  );
+}
+
+function LiquidGlassSurface({
+  cornerRadius = 32,
+  intensity = "panel",
+  mouseContainer,
+}: {
+  cornerRadius?: number;
+  intensity?: "panel" | "chrome" | "nested";
+  mouseContainer: RefObject<HTMLElement | null>;
+}) {
+  const liquidMotion = useContext(LiquidMotionContext);
+  const config =
+    intensity === "chrome"
+      ? {
+          aberrationIntensity: 3,
+          blurAmount: 0.07,
+          displacementScale: 135,
+          elasticity: 0.42,
+          mode: "prominent" as const,
+          overLight: false,
+          saturation: 165,
+        }
+      : intensity === "nested"
+        ? {
+            aberrationIntensity: 2.6,
+            blurAmount: 0.058,
+            displacementScale: 108,
+            elasticity: 0.28,
+            mode: "prominent" as const,
+            overLight: false,
+            saturation: 158,
+          }
+        : {
+          aberrationIntensity: 3.8,
+          blurAmount: 0.09,
+          displacementScale: 188,
+          elasticity: 0.18,
+          mode: "prominent" as const,
+          overLight: false,
+          saturation: 172,
+        };
+
+  return (
+    <div
+      aria-hidden="true"
+      className={`liquid-glass-visual liquid-glass-${intensity}`}
+    >
+      <LiquidGlass
+        aberrationIntensity={config.aberrationIntensity}
+        blurAmount={config.blurAmount}
+        className="liquid-glass-native"
+        cornerRadius={cornerRadius}
+        displacementScale={config.displacementScale}
+        elasticity={config.elasticity}
+        globalMousePos={liquidMotion.globalMousePos}
+        mode={config.mode}
+        mouseOffset={liquidMotion.mouseOffset}
+        mouseContainer={mouseContainer}
+        overLight={config.overLight}
+        padding="0"
+        saturation={config.saturation}
+        style={{
+          height: "100%",
+          left: "50%",
+          position: "absolute",
+          top: "50%",
+          width: "100%",
+        }}
+      >
+        <span className="liquid-glass-fill" />
+      </LiquidGlass>
+    </div>
   );
 }
 
@@ -480,16 +854,24 @@ function PrivateGate({
   notice,
   passcode,
   setPasscode,
+  style,
+  theme,
   unlock,
 }: {
   notice: string;
   passcode: string;
   setPasscode: (value: string) => void;
+  style?: CSSProperties;
+  theme: ThemeName;
   unlock: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <main className="app-shell grid min-h-screen place-items-center px-4 py-8">
-      <section className="card w-full max-w-[428px] p-4">
+    <main
+      className="app-shell grid min-h-screen place-items-center px-4 py-8"
+      data-theme={theme}
+      style={style}
+    >
+      <CardPanel className="w-full max-w-[428px] p-4">
         <h1 className="mb-4 text-lg font-semibold">PokéArb Japan</h1>
 
         <form className="grid gap-3" onSubmit={unlock}>
@@ -507,7 +889,7 @@ function PrivateGate({
             <p className="text-sm font-semibold text-red">{notice}</p>
           ) : null}
         </form>
-      </section>
+      </CardPanel>
     </main>
   );
 }
@@ -519,6 +901,9 @@ function AppHeader({
   onRequestLock: () => void;
   setScreen: (screen: Screen) => void;
 }) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const lockButtonRef = useRef<HTMLButtonElement | null>(null);
+
   return (
     <header className="mb-3 flex items-center justify-between">
       <button
@@ -532,11 +917,27 @@ function AppHeader({
       </button>
       <button
         aria-label="Lock app"
-        className="icon-button"
+        className={
+          isLiquidTheme
+            ? "liquid-lock-button liquid-glass-panel icon-button"
+            : "icon-button"
+        }
         onClick={onRequestLock}
+        ref={(node) => {
+          lockButtonRef.current = node;
+        }}
         type="button"
       >
-        <LockKeyhole size={18} />
+        {isLiquidTheme ? (
+          <LiquidGlassSurface
+            cornerRadius={18}
+            intensity="chrome"
+            mouseContainer={lockButtonRef}
+          />
+        ) : null}
+        <span className={isLiquidTheme ? "liquid-glass-content grid place-items-center" : undefined}>
+          <LockKeyhole size={18} />
+        </span>
       </button>
     </header>
   );
@@ -574,12 +975,12 @@ function HomeScreen({
 
   return (
     <section className="space-y-3">
-      <section className="card px-3 py-2">
+      <CardPanel className="px-3 py-2">
         <p className="text-xs text-muted">Approx. conversion</p>
         <p className="text-sm font-semibold">
           ¥1,000 ≈ {formatMoney(1000 / settings.yenDivisor)}
         </p>
-      </section>
+      </CardPanel>
 
       <section className="grid grid-cols-2 gap-2">
         {actions.map((action) => (
@@ -604,18 +1005,49 @@ function HomeAction({
   title?: string;
 }) {
   const label = title ?? NAV_ITEMS.find((item) => item.screen === screen)?.label ?? screen;
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
+  if (!isLiquidTheme) {
+    return (
+      <button
+        aria-label={label}
+        className="card flex min-h-20 p-3 text-left"
+        onClick={() => setScreen(screen)}
+        type="button"
+      >
+        <span className="flex h-full w-full flex-col items-start justify-between">
+          <Icon className="text-muted" size={20} />
+          <span>
+            <span className="block text-sm font-semibold">{label}</span>
+            {subtitle ? <span className="block text-xs text-muted">{subtitle}</span> : null}
+          </span>
+        </span>
+      </button>
+    );
+  }
 
   return (
     <button
       aria-label={label}
-      className="card flex min-h-20 flex-col items-start justify-between p-3 text-left"
+      className="liquid-glass-panel flex min-h-20 p-3 text-left"
       onClick={() => setScreen(screen)}
+      ref={(node) => {
+        surfaceRef.current = node;
+      }}
       type="button"
     >
-      <Icon className="text-muted" size={20} />
-      <span>
-        <span className="block text-sm font-semibold">{label}</span>
-        {subtitle ? <span className="block text-xs text-muted">{subtitle}</span> : null}
+      <LiquidGlassSurface
+        cornerRadius={32}
+        intensity="chrome"
+        mouseContainer={surfaceRef}
+      />
+      <span className="liquid-glass-content flex h-full w-full flex-col items-start justify-between">
+        <Icon className="text-muted" size={20} />
+        <span>
+          <span className="block text-sm font-semibold">{label}</span>
+          {subtitle ? <span className="block text-xs text-muted">{subtitle}</span> : null}
+        </span>
       </span>
     </button>
   );
@@ -654,14 +1086,14 @@ function DealCheckScreen({
         onSelectCard={onSelectCard}
       />
 
-      <section className="card p-3">
+      <CardPanel className="p-3">
         <CardSearchCombobox
           languageBucket={form.languageBucket}
           onSelectCard={onSelectCard}
           preferredLanguage={form.cardLanguage}
         />
         {form.cardName ? <SelectedCardSummary form={form} /> : null}
-      </section>
+      </CardPanel>
 
       <ShopPriceInput
         costDkk={calculation.costDkk}
@@ -672,6 +1104,7 @@ function DealCheckScreen({
       <MainDecisionCard
         calculation={calculation}
         condition={form.inHandCondition}
+        sellingFee={settings.sellingFee}
       />
 
       <RouteResultsPanel calculation={calculation} />
@@ -705,6 +1138,7 @@ function DealCheckScreen({
         <RotateCcw size={16} />
         Clear
       </button>
+      <div aria-hidden="true" className="deal-bottom-spacer" />
     </section>
   );
 }
@@ -719,7 +1153,7 @@ function InHandConditionSelector({
   const options: InHandCondition[] = ["raw", "psa9", "psa10"];
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <p className="mb-2 text-xs font-medium text-muted">In hand</p>
       <div className="grid grid-cols-3 gap-2">
         {options.map((option) => (
@@ -737,7 +1171,7 @@ function InHandConditionSelector({
           </button>
         ))}
       </div>
-    </section>
+    </CardPanel>
   );
 }
 
@@ -866,7 +1300,7 @@ function DealPhotoScanner({
   }
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <label className="button-primary h-11 w-full">
         <Camera size={17} />
         {scanning ? "Scanning" : "Scan card + price"}
@@ -943,7 +1377,7 @@ function DealPhotoScanner({
           ))}
         </div>
       ) : null}
-    </section>
+    </CardPanel>
   );
 }
 
@@ -956,12 +1390,78 @@ function CardSearchCombobox({
   onSelectCard: (card: CardSearchResult) => void;
   preferredLanguage: CardLanguage;
 }) {
+  const theme = useContext(ThemeContext);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CardSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  const [dropdownGeometry, setDropdownGeometry] = useState<{
+    left: number;
+    maxHeight: number;
+    top: number;
+    width: number;
+  } | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const measureFrame = useRef<number | null>(null);
+  const measureTimeouts = useRef<number[]>([]);
   const searchSequence = useRef(0);
+
+  const updateDropdownGeometry = useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) {
+      return;
+    }
+
+    const rect = anchor.getBoundingClientRect();
+    const visualViewport = window.visualViewport;
+    const viewportPadding = 16;
+    const viewportLeft = visualViewport?.offsetLeft ?? 0;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportWidth = visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    const top = Math.round(rect.bottom + viewportTop + 8);
+    const width = Math.min(rect.width, viewportWidth - viewportPadding * 2);
+    const left = Math.min(
+      Math.max(viewportLeft + viewportPadding, rect.left + viewportLeft),
+      viewportLeft + viewportWidth - viewportPadding - width,
+    );
+    const bottomLimit = viewportTop + viewportHeight - viewportPadding;
+    setDropdownGeometry({
+      left: Math.round(left),
+      maxHeight: Math.max(156, Math.min(320, bottomLimit - top)),
+      top,
+      width,
+    });
+  }, []);
+
+  const clearScheduledDropdownMeasures = useCallback(() => {
+    if (measureFrame.current !== null) {
+      window.cancelAnimationFrame(measureFrame.current);
+      measureFrame.current = null;
+    }
+
+    measureTimeouts.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    measureTimeouts.current = [];
+  }, []);
+
+  const scheduleDropdownGeometry = useCallback(() => {
+    updateDropdownGeometry();
+
+    if (measureFrame.current !== null) {
+      window.cancelAnimationFrame(measureFrame.current);
+    }
+
+    measureFrame.current = window.requestAnimationFrame(() => {
+      measureFrame.current = null;
+      updateDropdownGeometry();
+    });
+
+    measureTimeouts.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    measureTimeouts.current = [80, 180, 360, 620].map((delay) =>
+      window.setTimeout(updateDropdownGeometry, delay),
+    );
+  }, [updateDropdownGeometry]);
 
   const runSearch = useCallback(async (value: string, emptyMessage: string) => {
     const trimmed = value.trim();
@@ -971,6 +1471,9 @@ function CardSearchCombobox({
       }
       setResults([]);
       setOpen(Boolean(emptyMessage));
+      if (emptyMessage) {
+        scheduleDropdownGeometry();
+      }
       return;
     }
 
@@ -979,6 +1482,7 @@ function CardSearchCombobox({
     setLoading(true);
     setError("");
     setOpen(true);
+    scheduleDropdownGeometry();
     try {
       const cards = await searchCards(trimmed, {
         languageBucket,
@@ -1004,7 +1508,52 @@ function CardSearchCombobox({
         setLoading(false);
       }
     }
-  }, [languageBucket, preferredLanguage]);
+  }, [languageBucket, preferredLanguage, scheduleDropdownGeometry]);
+
+  useEffect(() => {
+    if (!open) {
+      clearScheduledDropdownMeasures();
+      return;
+    }
+
+    scheduleDropdownGeometry();
+    const visualViewport = window.visualViewport;
+    window.addEventListener("resize", updateDropdownGeometry, { passive: true });
+    window.addEventListener("scroll", updateDropdownGeometry, true);
+    visualViewport?.addEventListener("resize", scheduleDropdownGeometry, { passive: true });
+    visualViewport?.addEventListener("scroll", updateDropdownGeometry, { passive: true });
+
+    return () => {
+      clearScheduledDropdownMeasures();
+      window.removeEventListener("resize", updateDropdownGeometry);
+      window.removeEventListener("scroll", updateDropdownGeometry, true);
+      visualViewport?.removeEventListener("resize", scheduleDropdownGeometry);
+      visualViewport?.removeEventListener("scroll", updateDropdownGeometry);
+    };
+  }, [
+    clearScheduledDropdownMeasures,
+    error,
+    loading,
+    open,
+    results.length,
+    scheduleDropdownGeometry,
+    updateDropdownGeometry,
+  ]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -1018,6 +1567,10 @@ function CardSearchCombobox({
 
     return () => window.clearTimeout(timeout);
   }, [query, runSearch]);
+
+  useEffect(() => {
+    return clearScheduledDropdownMeasures;
+  }, [clearScheduledDropdownMeasures]);
 
   async function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1033,15 +1586,63 @@ function CardSearchCombobox({
     setError("");
   }
 
+  const dropdown =
+    open && dropdownGeometry && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="search-results-portal fixed overflow-auto rounded-lg border border-border bg-elevated"
+            data-theme={theme}
+            style={{
+              left: dropdownGeometry.left,
+              maxHeight: dropdownGeometry.maxHeight,
+              top: dropdownGeometry.top,
+              width: dropdownGeometry.width,
+            }}
+          >
+            {loading ? (
+              <p className="px-3 py-3 text-sm text-muted">Searching...</p>
+            ) : null}
+            {!loading && error ? (
+              <p className="px-3 py-3 text-sm text-amber">{error}</p>
+            ) : null}
+            {!loading
+              ? results.map((card) => (
+                  <button
+                    className="flex w-full items-center gap-3 border-b border-border/80 px-3 py-2 text-left last:border-0"
+                    key={card.id}
+                    onClick={() => select(card)}
+                    type="button"
+                  >
+                    <CardThumb imageUrl={card.imageUrl} name={card.name} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{card.name}</span>
+                      <span className="block truncate text-xs text-muted">
+                        {[card.setName, card.cardNumber].filter(Boolean).join(" - ")}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              : null}
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
-    <div className="relative">
+    <div className="relative" ref={anchorRef}>
       <form className="flex gap-2" onSubmit={search}>
         <label className="min-w-0 flex-1">
           <span className="sr-only">Search card</span>
           <input
             className="input-shell h-11 w-full rounded-lg px-3 text-base outline-none focus:border-text"
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              if (open) {
+                scheduleDropdownGeometry();
+              }
+            }}
             onFocus={() => {
+              scheduleDropdownGeometry();
               if (results.length > 0 || error) setOpen(true);
             }}
             placeholder="Search Pikachu, 205/172, 1/5..."
@@ -1053,34 +1654,7 @@ function CardSearchCombobox({
         </button>
       </form>
 
-      {open ? (
-        <div className="absolute inset-x-0 top-12 z-40 max-h-80 overflow-auto rounded-lg border border-border bg-elevated">
-          {loading ? (
-            <p className="px-3 py-3 text-sm text-muted">Searching...</p>
-          ) : null}
-          {!loading && error ? (
-            <p className="px-3 py-3 text-sm text-amber">{error}</p>
-          ) : null}
-          {!loading
-            ? results.map((card) => (
-                <button
-                  className="flex w-full items-center gap-3 border-b border-border/80 px-3 py-2 text-left last:border-0"
-                  key={card.id}
-                  onClick={() => select(card)}
-                  type="button"
-                >
-                  <CardThumb imageUrl={card.imageUrl} name={card.name} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{card.name}</span>
-                    <span className="block truncate text-xs text-muted">
-                      {[card.setName, card.cardNumber].filter(Boolean).join(" - ")}
-                    </span>
-                  </span>
-                </button>
-              ))
-            : null}
-        </div>
-      ) : null}
+      {dropdown}
     </div>
   );
 }
@@ -1109,7 +1683,7 @@ function ShopPriceInput({
   value: string;
 }) {
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <label>
         <span className="text-xs font-medium text-muted">Shop price</span>
         <span className="mt-2 flex h-12 items-center rounded-lg border border-border bg-background px-3">
@@ -1128,16 +1702,18 @@ function ShopPriceInput({
           Cost: <span className="font-semibold text-text">{formatMoney(costDkk)}</span>
         </p>
       </div>
-    </section>
+    </CardPanel>
   );
 }
 
 function MainDecisionCard({
   calculation,
   condition,
+  sellingFee,
 }: {
   calculation: DealCalculation;
   condition: InHandCondition;
+  sellingFee: number;
 }) {
   const isReady = calculation.displayState === "ready";
   const headline =
@@ -1148,7 +1724,7 @@ function MainDecisionCard({
         : calculation.route?.label ?? CONDITION_LABELS[condition];
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-muted">Result</p>
@@ -1177,7 +1753,7 @@ function MainDecisionCard({
           value={formatMoney(calculation.referenceValueUsedDkk)}
         />
         <Fact
-          label="Net after 5%"
+          label={`Buffer ${formatFeePercent(sellingFee)}`}
           value={formatMoney(calculation.netReferenceValueDkk)}
         />
       </dl>
@@ -1205,7 +1781,7 @@ function MainDecisionCard({
           High-end risk. Margin must survive VAT, declaration, and liquidity.
         </WarningBox>
       ) : null}
-    </section>
+    </CardPanel>
   );
 }
 
@@ -1219,14 +1795,14 @@ function RouteResultsPanel({
   }
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <h3 className="text-sm font-semibold">Routes</h3>
       <div className="mt-2 grid gap-1.5">
         {calculation.routes.map((route) => (
           <RouteResultRow key={route.id} route={route} />
         ))}
       </div>
-    </section>
+    </CardPanel>
   );
 }
 
@@ -1272,7 +1848,7 @@ function ReferencePricesPanel({
   const gradeRows = gradeReferenceRows(condition, normalizedRawCondition, values);
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">Reference prices</h3>
         {reference.isFetching ? (
@@ -1305,7 +1881,7 @@ function ReferencePricesPanel({
       <div className="mt-3">
         <SourceChips sourceUrls={values.sourceUrls} sources={values.sources} />
       </div>
-    </section>
+    </CardPanel>
   );
 }
 
@@ -1419,7 +1995,7 @@ function EditableValuesPanel({
   const [open, setOpen] = useState(false);
 
   return (
-    <section className="card p-3">
+    <CardPanel className="p-3">
       <button
         className="flex h-9 w-full items-center justify-between text-sm font-semibold"
         onClick={() => setOpen((current) => !current)}
@@ -1492,7 +2068,7 @@ function EditableValuesPanel({
           <p className="text-xs text-muted">Cost = yen / {settings.yenDivisor}</p>
         </div>
       ) : null}
-    </section>
+    </CardPanel>
   );
 }
 
@@ -1566,18 +2142,18 @@ function HistoryScreen({
   return (
     <section className="space-y-3">
       <ScreenTitle subtitle="Saved shop checks" title="History" />
-      <section className="card p-3">
+      <CardPanel className="p-3">
         <p className="text-sm text-muted">Bought total</p>
         <p className="mt-1 text-xl font-semibold">{formatYen(totalBoughtYen)}</p>
         <p className="text-sm text-muted">{formatMoney(totalBoughtDkk)}</p>
-      </section>
+      </CardPanel>
 
       <div className="grid gap-1.5">
         {deals.length === 0 ? (
           <EmptyState text="No saved deals yet." />
         ) : (
           deals.map((deal) => (
-            <article className="card p-3" key={deal.id}>
+            <ArticlePanel className="p-3" key={deal.id}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 gap-3">
                   <CardThumb imageUrl={deal.imageUrl} name={deal.cardName} />
@@ -1619,7 +2195,7 @@ function HistoryScreen({
                   <Trash2 size={15} />
                 </button>
               </div>
-            </article>
+            </ArticlePanel>
           ))
         )}
       </div>
@@ -1628,27 +2204,43 @@ function HistoryScreen({
 }
 
 function SettingsScreen({
+  liquidBackground,
   onChange,
+  onLiquidBackgroundChange,
   onReset,
+  onThemeChange,
   settings,
+  theme,
 }: {
+  liquidBackground: LiquidBackgroundName;
   onChange: (field: keyof AppSettings, value: string) => void;
+  onLiquidBackgroundChange: (background: LiquidBackgroundName) => void;
   onReset: () => void;
+  onThemeChange: (theme: ThemeName) => void;
   settings: AppSettings;
+  theme: ThemeName;
 }) {
   return (
     <section className="space-y-3">
       <ScreenTitle subtitle="Simple in-store formula" title="Settings" />
-      <section className="card p-3">
+      <ThemeSelector onChange={onThemeChange} value={theme} />
+      {theme === "liquid" ? (
+        <LiquidBackgroundSelector
+          onChange={onLiquidBackgroundChange}
+          value={liquidBackground}
+        />
+      ) : null}
+
+      <CardPanel className="p-3">
         <p className="text-sm text-muted">Formula</p>
         <p className="mt-1 text-base font-semibold">Cost = yen / {settings.yenDivisor}</p>
         <p className="text-sm text-muted">
-          Net keeps {Math.round((1 - settings.sellingFee) * 100)}% after fee
+          Buffer removes {formatFeePercent(settings.sellingFee)}
         </p>
         <p className="text-sm text-muted">
           Grading adds {formatMoney(settings.gradingFeeDkk)}
         </p>
-      </section>
+      </CardPanel>
 
       <div className="grid gap-2">
         <SettingNumberField
@@ -1661,7 +2253,7 @@ function SettingsScreen({
         <SettingNumberField
           field="sellingFee"
           key={`sellingFee-${settings.sellingFee}`}
-          label="Selling fee"
+          label="Buffer %"
           onCommit={onChange}
           placeholder="0.05"
           value={settings.sellingFee}
@@ -1679,6 +2271,145 @@ function SettingsScreen({
         Reset defaults
       </button>
     </section>
+  );
+}
+
+function LiquidBackgroundSelector({
+  onChange,
+  value,
+}: {
+  onChange: (background: LiquidBackgroundName) => void;
+  value: LiquidBackgroundName;
+}) {
+  return (
+    <CardPanel className="p-3">
+      <p className="text-sm font-semibold">Liquid background</p>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {LIQUID_BACKGROUND_OPTIONS.map((background) => {
+          const active = value === background.name;
+
+          return (
+            <button
+              aria-pressed={active}
+              className={`liquid-background-option overflow-hidden rounded-lg border text-left ${
+                active ? "border-text/55 bg-strong" : "border-border bg-background"
+              }`}
+              key={background.name}
+              onClick={() => onChange(background.name)}
+              type="button"
+            >
+              <span
+                aria-hidden="true"
+                className="block h-16 bg-cover"
+                style={{
+                  backgroundImage: `url("${background.src}")`,
+                  backgroundPosition: background.position,
+                }}
+              />
+              <span className="block px-2 py-1.5 text-xs font-semibold">
+                {background.title}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </CardPanel>
+  );
+}
+
+function ThemeSelector({
+  onChange,
+  value,
+}: {
+  onChange: (theme: ThemeName) => void;
+  value: ThemeName;
+}) {
+  return (
+    <CardPanel className="p-3">
+      <p className="text-sm font-semibold">Theme</p>
+      <div className="mt-2 grid gap-2">
+        {THEME_OPTIONS.map((theme) => {
+          const active = value === theme.name;
+
+          return (
+            <ThemeOptionButton
+              active={active}
+              key={theme.name}
+              onClick={() => onChange(theme.name)}
+              theme={theme}
+            />
+          );
+        })}
+      </div>
+    </CardPanel>
+  );
+}
+
+function ThemeOptionButton({
+  active,
+  onClick,
+  theme,
+}: {
+  active: boolean;
+  onClick: () => void;
+  theme: (typeof THEME_OPTIONS)[number];
+}) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+  const content = (
+    <span className="flex w-full items-center justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold">{theme.title}</span>
+        <span className="block text-xs text-muted">{theme.description}</span>
+      </span>
+      <span className="flex shrink-0 overflow-hidden rounded-md border border-border">
+        {theme.swatches.map((color, index) => (
+          <span
+            aria-hidden="true"
+            className="h-5 w-5"
+            key={`${theme.name}-${index}`}
+            style={{ background: color }}
+          />
+        ))}
+      </span>
+    </span>
+  );
+  const buttonClassName = `theme-option flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${
+    active
+      ? "border-text/45 bg-strong"
+      : "border-border bg-surface"
+  }`;
+
+  if (!isLiquidTheme) {
+    return (
+      <button
+        className={buttonClassName}
+        onClick={onClick}
+        type="button"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      className={`liquid-glass-panel ${buttonClassName}`}
+      onClick={onClick}
+      ref={(node) => {
+        surfaceRef.current = node;
+      }}
+      type="button"
+    >
+      <LiquidGlassSurface
+        cornerRadius={16}
+        intensity="nested"
+        mouseContainer={surfaceRef}
+      />
+      <span className="liquid-glass-content flex w-full">
+        {content}
+      </span>
+    </button>
   );
 }
 
@@ -1730,6 +2461,38 @@ function settingNumberDraft(value: number): string {
   return Number.isFinite(value) ? String(value) : "";
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function formatFeePercent(value: number): string {
+  return `${new Intl.NumberFormat("da-DK", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  }).format(value * 100)}%`;
+}
+
+function normalizeTheme(value: unknown): ThemeName {
+  return THEME_OPTIONS.some((theme) => theme.name === value)
+    ? (value as ThemeName)
+    : DEFAULT_THEME;
+}
+
+function normalizeLiquidBackground(value: unknown): LiquidBackgroundName {
+  return LIQUID_BACKGROUND_OPTIONS.some(
+    (background) => background.name === value,
+  )
+    ? (value as LiquidBackgroundName)
+    : DEFAULT_LIQUID_BACKGROUND;
+}
+
+function liquidBackgroundOption(name: LiquidBackgroundName) {
+  return (
+    LIQUID_BACKGROUND_OPTIONS.find((background) => background.name === name) ??
+    LIQUID_BACKGROUND_OPTIONS[0]
+  );
+}
+
 function PsaSlabScreen({
   onOpenDealCheck,
 }: {
@@ -1768,7 +2531,7 @@ function PsaSlabScreen({
     <section className="space-y-3">
       <ScreenTitle subtitle="Check the cert on PSA" title="PSA Slab" />
 
-      <section className="card p-3">
+      <CardPanel className="p-3">
         <div className="mb-3 rounded-lg border border-border bg-background p-3">
           <p className="text-xs font-medium text-muted">PSA cert verification</p>
           <p className="mt-1 text-sm text-muted">Scan or enter the cert number.</p>
@@ -1816,7 +2579,7 @@ function PsaSlabScreen({
           slab/card is authentic. Compare the cert details and PSA photos, and
           inspect the slab and card.
         </WarningBox>
-      </section>
+      </CardPanel>
 
       <button
         className="button-secondary h-10 w-full"
@@ -1837,6 +2600,8 @@ function StickyDecisionBar({
   calculation: DealCalculation;
   form: DealForm;
 }) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
   const statusText =
     calculation.displayState === "ready"
       ? `${calculation.route?.label ?? "Route"} / ${formatPercent(calculation.marginPercent)}`
@@ -1847,21 +2612,65 @@ function StickyDecisionBar({
           : "Waiting for value";
 
   return (
-    <section className="fixed inset-x-0 bottom-[calc(5.05rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-[428px] px-4">
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-elevated px-3 py-2">
-        <div className="min-w-0">
-          <p className="text-xs text-muted">
-            {formatMoney(calculation.costDkk)} - {CONDITION_LABELS[form.inHandCondition]}
-          </p>
-          <p className="truncate text-sm font-semibold">
-            {statusText}
-          </p>
-        </div>
-        {calculation.displayState === "ready" ? (
-          <DecisionBadge decision={calculation.decision} />
-        ) : null}
+    <section className="fixed inset-x-0 bottom-[calc(5.7rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-[428px] px-4">
+      <div
+        className={`decision-surface rounded-lg border border-border bg-elevated ${
+          isLiquidTheme ? "liquid-glass-panel" : ""
+        }`}
+        ref={(node) => {
+          surfaceRef.current = node;
+        }}
+      >
+        {isLiquidTheme ? (
+          <>
+            <LiquidGlassSurface
+              cornerRadius={18}
+              intensity="chrome"
+              mouseContainer={surfaceRef}
+            />
+            <div className="liquid-glass-content">
+              <DecisionBarContent
+                calculation={calculation}
+                form={form}
+                statusText={statusText}
+              />
+            </div>
+          </>
+        ) : (
+          <DecisionBarContent
+            calculation={calculation}
+            form={form}
+            statusText={statusText}
+          />
+        )}
       </div>
     </section>
+  );
+}
+
+function DecisionBarContent({
+  calculation,
+  form,
+  statusText,
+}: {
+  calculation: DealCalculation;
+  form: DealForm;
+  statusText: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3 py-2">
+      <div className="min-w-0">
+        <p className="text-xs text-muted">
+          {formatMoney(calculation.costDkk)} - {CONDITION_LABELS[form.inHandCondition]}
+        </p>
+        <p className="truncate text-sm font-semibold">
+          {statusText}
+        </p>
+      </div>
+      {calculation.displayState === "ready" ? (
+        <DecisionBadge decision={calculation.decision} />
+      ) : null}
+    </div>
   );
 }
 
@@ -1872,32 +2681,69 @@ function BottomNav({
   screen: Screen;
   setScreen: (screen: Screen) => void;
 }) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
   return (
     <>
-      <div aria-hidden="true" className="bottom-nav-backdrop" />
       <nav className="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-[428px] px-4 pt-2 safe-bottom">
-        <div className="grid grid-cols-4 rounded-lg border border-border bg-elevated p-1">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const active = screen === item.screen;
-
-            return (
-              <button
-                className={`grid place-items-center gap-0.5 rounded-md py-2 text-[11px] font-semibold ${
-                  active ? "bg-strong text-text" : "text-muted"
-                }`}
-                key={item.screen}
-                onClick={() => setScreen(item.screen)}
-                type="button"
-              >
-                <Icon size={18} />
-                {item.label}
-              </button>
-            );
-          })}
+        <div
+          className={`bottom-nav-surface rounded-lg border border-border bg-elevated ${
+            isLiquidTheme ? "liquid-glass-panel" : ""
+          }`}
+          ref={(node) => {
+            surfaceRef.current = node;
+          }}
+        >
+          {isLiquidTheme ? (
+            <>
+              <LiquidGlassSurface
+                cornerRadius={18}
+                intensity="chrome"
+                mouseContainer={surfaceRef}
+              />
+              <div className="liquid-glass-content">
+                <BottomNavContent screen={screen} setScreen={setScreen} />
+              </div>
+            </>
+          ) : (
+            <BottomNavContent screen={screen} setScreen={setScreen} />
+          )}
         </div>
       </nav>
     </>
+  );
+}
+
+function BottomNavContent({
+  screen,
+  setScreen,
+}: {
+  screen: Screen;
+  setScreen: (screen: Screen) => void;
+}) {
+  return (
+    <div className="grid grid-cols-4 p-1">
+      {NAV_ITEMS.map((item) => {
+        const Icon = item.icon;
+        const active = screen === item.screen;
+
+        return (
+          <button
+            aria-label={item.label}
+            className={`grid place-items-center gap-0.5 rounded-md py-2 text-[11px] font-semibold ${
+              active ? "bg-strong text-text" : "text-muted"
+            }`}
+            key={item.screen}
+            onClick={() => setScreen(item.screen)}
+            type="button"
+          >
+            <Icon size={18} />
+            {item.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1914,33 +2760,88 @@ function ConfirmSheet({
   onConfirm: () => void;
   title: string;
 }) {
+  const isLiquidTheme = useIsLiquidTheme();
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
   return (
     <div className="fixed inset-0 z-[70] grid place-items-end bg-black/60 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-      <section className="w-full max-w-[428px] rounded-lg border border-border bg-elevated p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">{title}</h2>
-            <p className="mt-1 text-sm text-muted">{body}</p>
-          </div>
-          <button
-            aria-label="Cancel"
-            className="icon-button"
-            onClick={onCancel}
-            type="button"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <button className="button-secondary h-10" onClick={onCancel} type="button">
-            Cancel
-          </button>
-          <button className="button-danger h-10" onClick={onConfirm} type="button">
-            <LockKeyhole size={16} />
-            {confirmLabel}
-          </button>
-        </div>
+      <section
+        className={`w-full max-w-[428px] rounded-lg border border-border bg-elevated p-4 ${
+          isLiquidTheme ? "liquid-glass-panel" : ""
+        }`}
+        ref={(node) => {
+          surfaceRef.current = node;
+        }}
+      >
+        {isLiquidTheme ? (
+          <>
+            <LiquidGlassSurface
+              cornerRadius={24}
+              intensity="chrome"
+              mouseContainer={surfaceRef}
+            />
+            <div className="liquid-glass-content">
+              <ConfirmSheetContent
+                body={body}
+                confirmLabel={confirmLabel}
+                onCancel={onCancel}
+                onConfirm={onConfirm}
+                title={title}
+              />
+            </div>
+          </>
+        ) : (
+          <ConfirmSheetContent
+            body={body}
+            confirmLabel={confirmLabel}
+            onCancel={onCancel}
+            onConfirm={onConfirm}
+            title={title}
+          />
+        )}
       </section>
+    </div>
+  );
+}
+
+function ConfirmSheetContent({
+  body,
+  confirmLabel,
+  onCancel,
+  onConfirm,
+  title,
+}: {
+  body: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  title: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-muted">{body}</p>
+        </div>
+        <button
+          aria-label="Cancel"
+          className="icon-button"
+          onClick={onCancel}
+          type="button"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button className="button-secondary h-10" onClick={onCancel} type="button">
+          Cancel
+        </button>
+        <button className="button-danger h-10" onClick={onConfirm} type="button">
+          <LockKeyhole size={16} />
+          {confirmLabel}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2083,7 +2984,7 @@ function WarningBox({ children }: { children: ReactNode }) {
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <section className="card p-4 text-center text-sm text-muted">{text}</section>;
+  return <CardPanel className="p-4 text-center text-sm text-muted">{text}</CardPanel>;
 }
 
 function decisionBadge(decision: Decision): string {

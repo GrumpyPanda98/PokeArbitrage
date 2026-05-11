@@ -3,7 +3,9 @@ import { extractYenPrices, pickBestYenPrice } from "@/lib/ocr";
 export const dynamic = "force-dynamic";
 
 type LocalPriceOcrResponse = {
+  candidates?: unknown;
   prices?: unknown;
+  regions?: unknown;
   source?: unknown;
   text?: unknown;
   warning?: unknown;
@@ -60,7 +62,9 @@ export async function POST(request: Request) {
       numberOrUndefined(data.yenPrice) ?? pickBestYenPrice(text) ?? parsedPrices[0];
 
     return Response.json({
+      candidates: Array.isArray(data.candidates) ? data.candidates : undefined,
       prices: parsedPrices,
+      regions: Array.isArray(data.regions) ? data.regions : undefined,
       source: data.source === "paddleocr-gpu" ? data.source : "paddleocr-gpu",
       text,
       warning: typeof data.warning === "string" ? data.warning : undefined,
