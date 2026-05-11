@@ -1,0 +1,4 @@
+# Install these in an environment that already has CUDA PyTorch.
+# On this PC, the Conda env `MNE` already has PyTorch + CUDA for the RTX 5090.
+transformers>=4.45.0
+safetensors>=0.4.5
