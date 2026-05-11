@@ -34,6 +34,14 @@ Then pass the embedding index when matching:
 & $conda run -n MNE python match_card.py path\to\photo.jpg --embedding-index cache\ja_embeddings_facebook_dinov2-base.npz --device cuda
 ```
 
+For camera-shot debugging, write the crops that the matcher actually compared:
+
+```powershell
+& $conda run -n MNE python match_card.py path\to\photo.jpg --embedding-index cache\ja_embeddings_facebook_dinov2-base.npz --device cuda --debug-dir reports\last-crops
+```
+
+When the Next.js app is hosted with `LOCAL_CARD_MATCHER_DEBUG_DIR` set, phone scans write the same normalized crops there.
+
 ## Build A Japanese Reference Index
 
 Start small while testing. This downloads set metadata and card images into `cache/`, which is ignored by git.

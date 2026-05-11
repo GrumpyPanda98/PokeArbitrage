@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .image_ops import load_bgr_image, normalize_card_image
+from .image_ops import load_bgr_image, normalize_card_image, normalize_card_image_candidates
 from .index_store import CardIndex
 
 
@@ -67,12 +67,22 @@ class GpuEmbeddingModel:
         self.model = AutoModel.from_pretrained(model_name).to(self.device).eval()
 
     def embed_paths(self, paths: Iterable[str | Path], batch_size: int = 16) -> np.ndarray:
-        vectors: list[np.ndarray] = []
-        batch: list[Image.Image] = []
+        images: list[np.ndarray] = []
         for path in paths:
             image = load_bgr_image(path)
             normalized, _ = normalize_card_image(image)
-            batch.append(to_pil(normalized))
+            images.append(normalized)
+        return self.embed_bgr_images(images, batch_size=batch_size)
+
+    def embed_bgr_images(
+        self,
+        images: Iterable[np.ndarray],
+        batch_size: int = 16,
+    ) -> np.ndarray:
+        vectors: list[np.ndarray] = []
+        batch: list[Image.Image] = []
+        for image in images:
+            batch.append(to_pil(image))
             if len(batch) >= batch_size:
                 vectors.append(self.embed_pil_batch(batch))
                 batch = []
@@ -87,6 +97,9 @@ class GpuEmbeddingModel:
     def embed_bgr_image(self, image: np.ndarray) -> np.ndarray:
         normalized, _ = normalize_card_image(image)
         return self.embed_pil_batch([to_pil(normalized)])[0]
+
+    def embed_query_variants(self, images: Iterable[np.ndarray]) -> np.ndarray:
+        return self.embed_bgr_images(images, batch_size=8)
 
     def embed_pil_batch(self, images: list[Image.Image]) -> np.ndarray:
         torch = self.torch
@@ -110,9 +123,18 @@ def build_embedding_index(
     batch_size: int = 16,
 ) -> EmbeddingIndex:
     valid_cards = [card for card in index.cards if Path(card.image_path).exists()]
-    embeddings = model.embed_paths([card.image_path for card in valid_cards], batch_size=batch_size)
+    card_ids: list[str] = []
+    images: list[np.ndarray] = []
+    for card in valid_cards:
+        image = load_bgr_image(card.image_path)
+        normalized, _ = normalize_card_image(image)
+        for variant in reference_embedding_variants(normalized):
+            card_ids.append(card.id)
+            images.append(variant)
+
+    embeddings = model.embed_bgr_images(images, batch_size=batch_size)
     return EmbeddingIndex(
-        card_ids=[card.id for card in valid_cards],
+        card_ids=card_ids,
         embeddings=embeddings,
         model_name=model.model_name,
     )
@@ -136,3 +158,22 @@ def default_embedding_path(cache_dir: str | Path, language: str, model_name: str
 
 def to_pil(image: np.ndarray) -> Image.Image:
     return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+
+def reference_embedding_variants(image: np.ndarray) -> list[np.ndarray]:
+    variants = [image]
+    height, width = image.shape[:2]
+    margins = [0.035, 0.07]
+    for margin in margins:
+        x = int(width * margin)
+        y = int(height * margin)
+        crop = image[y : height - y, x : width - x]
+        variants.append(cv2.resize(crop, (width, height), interpolation=cv2.INTER_AREA))
+
+    art_top = int(height * 0.12)
+    art_bottom = int(height * 0.58)
+    art_left = int(width * 0.08)
+    art_right = int(width * 0.92)
+    artwork = image[art_top:art_bottom, art_left:art_right]
+    variants.append(cv2.resize(artwork, (width, height), interpolation=cv2.INTER_AREA))
+    return variants

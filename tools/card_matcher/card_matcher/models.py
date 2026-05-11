@@ -66,6 +66,7 @@ class MatchResult:
     orb_similarity: float
     crop_used: bool
     embedding_similarity: float = 0.0
+    crop_label: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -76,4 +77,5 @@ class MatchResult:
             "orb_similarity": round(self.orb_similarity, 5),
             "embedding_similarity": round(self.embedding_similarity, 5),
             "crop_used": self.crop_used,
+            "crop_label": self.crop_label,
         }

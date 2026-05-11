@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from card_matcher.image_ops import load_bgr_image, save_normalized_candidates
 from card_matcher.index_store import index_path
 from card_matcher.matcher import CardMatcher
 
@@ -25,7 +26,15 @@ def main() -> None:
         default=0.52,
         help="Blend weight for GPU embedding similarity.",
     )
+    parser.add_argument("--debug-dir", help="Write normalized query crops for inspection.")
     args = parser.parse_args()
+
+    if args.debug_dir:
+        save_normalized_candidates(
+            load_bgr_image(args.image),
+            args.debug_dir,
+            prefix=Path(args.image).stem,
+        )
 
     matcher = CardMatcher.from_index_path(
         Path(args.index) if args.index else index_path(args.cache_dir, args.language),
@@ -46,7 +55,7 @@ def main() -> None:
             f"{rank:02d}. {card.id} | {card.name} | {card.set_name} #{card.local_id} "
             f"| score={match.score:.3f} hash={match.hash_distance:.1f} "
             f"hist={match.histogram_similarity:.3f} orb={match.orb_similarity:.3f} "
-            f"embed={match.embedding_similarity:.3f}"
+            f"embed={match.embedding_similarity:.3f} crop={match.crop_label}"
         )
 
 

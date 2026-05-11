@@ -165,6 +165,10 @@ async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[
       );
     }
 
+    if (process.env.LOCAL_CARD_MATCHER_DEBUG_DIR) {
+      args.push("--debug-dir", process.env.LOCAL_CARD_MATCHER_DEBUG_DIR);
+    }
+
     const { stdout } = await execFileAsync(pythonPath, args, {
       cwd: matcherDir,
       env: {
