@@ -18,6 +18,7 @@ import {
 import type {
   CardScanCandidate,
   CardScanEvidence,
+  CardRecognitionContract,
   CardScanResponse,
   CardScanSource,
 } from "./scan-card";
@@ -58,6 +59,11 @@ type LocalMatcherResult = {
   score?: number;
 };
 
+type LocalImageScanResult = {
+  candidates: CardScanCandidate[];
+  recognition?: CardRecognitionContract;
+};
+
 export async function scanCardImageServer(file: File): Promise<CardScanResponse> {
   if (!file.type.startsWith("image/")) {
     throw new Error("Upload an image file.");
@@ -71,12 +77,15 @@ export async function scanCardImageServer(file: File): Promise<CardScanResponse>
   const warnings: string[] = [];
   const directCandidates: CardScanCandidate[] = [];
   const extractions: ProviderExtraction[] = [];
+  let recognition: CardRecognitionContract | undefined;
 
   for (const provider of getProviderOrder()) {
     try {
       if (provider === "local-image") {
         providersTried.push(provider);
-        directCandidates.push(...(await scanWithLocalImageMatcher(file)));
+        const localResult = await scanWithLocalImageMatcher(file);
+        directCandidates.push(...localResult.candidates);
+        recognition = localResult.recognition ?? recognition;
       }
 
       if (provider === "gibltcg" && process.env.GIBLTCG_API_KEY) {
@@ -114,21 +123,22 @@ export async function scanCardImageServer(file: File): Promise<CardScanResponse>
     best: candidates[0],
     candidates,
     psaCert,
+    recognition,
     providersTried: uniqueSources(providersTried),
     warnings: uniqueStrings(warnings),
   };
 }
 
-async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[]> {
+async function scanWithLocalImageMatcher(file: File): Promise<LocalImageScanResult> {
   const matcherDir =
     process.env.LOCAL_CARD_MATCHER_DIR ??
-    path.join(process.cwd(), "tools", "card_matcher");
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "tools", "card_matcher");
   const pythonPath =
     process.env.LOCAL_CARD_MATCHER_PYTHON ??
     path.join(os.homedir(), "anaconda3", "envs", "MNE", "python.exe");
   const cacheDir =
     process.env.LOCAL_CARD_MATCHER_CACHE_DIR ??
-    path.join(matcherDir, "cache");
+    path.join(/*turbopackIgnore: true*/ matcherDir, "cache");
   const indexPath =
     process.env.LOCAL_CARD_MATCHER_INDEX ??
     path.join(cacheDir, "ja_image_index.json");
@@ -137,7 +147,11 @@ async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[
     path.join(cacheDir, "ja_embeddings_facebook_dinov2-base.npz");
 
   await assertPathExists(pythonPath, "Local matcher Python was not found");
-  await assertPathExists(path.join(matcherDir, "match_card.py"), "Local matcher script was not found");
+  const matcherScript = process.env.LOCAL_CARD_MATCHER_SCRIPT ?? "match_card_v2.py";
+  await assertPathExists(
+    path.join(/*turbopackIgnore: true*/ matcherDir, matcherScript),
+    "Local matcher script was not found",
+  );
   await assertPathExists(indexPath, "Local matcher image index was not found");
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "pokearb-card-"));
@@ -147,7 +161,7 @@ async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[
     await writeFile(tempPath, Buffer.from(await file.arrayBuffer()));
 
     const args = [
-      "match_card.py",
+      matcherScript,
       tempPath,
       "--index",
       indexPath,
@@ -180,7 +194,7 @@ async function scanWithLocalImageMatcher(file: File): Promise<CardScanCandidate[
       windowsHide: true,
     });
 
-    return parseLocalMatcherResults(stdout).map(localMatcherResultToCandidate);
+    return parseLocalMatcherOutput(stdout);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
   }
@@ -206,6 +220,7 @@ function localMatcherResultToCandidate(result: LocalMatcherResult): CardScanCand
     },
     confidence,
     evidence: {
+      canonicalPrintUid: card.id ? result.card?.id : undefined,
       cardNumber: localId,
       language: card.language === "en" ? "en" : "ja",
       name,
@@ -217,15 +232,117 @@ function localMatcherResultToCandidate(result: LocalMatcherResult): CardScanCand
   };
 }
 
-function parseLocalMatcherResults(stdout: string): LocalMatcherResult[] {
-  const start = stdout.indexOf("[");
-  const end = stdout.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) {
-    return [];
+function parseLocalMatcherOutput(stdout: string): LocalImageScanResult {
+  const parsed = parseJsonPayload(stdout);
+  if (Array.isArray(parsed)) {
+    return {
+      candidates: (parsed.filter(isRecord) as LocalMatcherResult[]).map(
+        localMatcherResultToCandidate,
+      ),
+    };
   }
 
-  const parsed = JSON.parse(stdout.slice(start, end + 1)) as unknown;
-  return Array.isArray(parsed) ? (parsed.filter(isRecord) as LocalMatcherResult[]) : [];
+  if (isRecord(parsed)) {
+    const candidates = recordsFromMaybeArray(readPath(parsed, ["candidates"]));
+    return {
+      candidates: candidates.map((candidate) =>
+        localMatcherV2CandidateToCandidate(candidate, parsed),
+      ),
+      recognition: parsed as CardRecognitionContract,
+    };
+  }
+
+  return { candidates: [] };
+}
+
+function parseJsonPayload(stdout: string): unknown {
+  const trimmed = stdout.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const objectStart = stdout.indexOf("{");
+    const arrayStart = stdout.indexOf("[");
+    const starts = [objectStart, arrayStart].filter((value) => value >= 0);
+    if (starts.length === 0) {
+      return undefined;
+    }
+
+    const start = Math.min(...starts);
+    const end = stdout[start] === "{" ? stdout.lastIndexOf("}") : stdout.lastIndexOf("]");
+    if (end <= start) {
+      return undefined;
+    }
+
+    return JSON.parse(stdout.slice(start, end + 1)) as unknown;
+  }
+}
+
+function localMatcherV2CandidateToCandidate(
+  candidate: Record<string, unknown>,
+  root: Record<string, unknown>,
+): CardScanCandidate {
+  const card = firstRecord([readPath(candidate, ["card"])]) ?? {};
+  const recognizedFields = firstRecord([readPath(root, ["recognized_fields"])]) ?? {};
+  const canonicalPrintUid = firstString([
+    getString(candidate, "canonical_print_uid"),
+    getString(card, "canonical_print_uid"),
+    getString(root, "canonical_print_uid"),
+  ]);
+  const setId = firstString([
+    getString(card, "set_id"),
+    getString(card, "tcgDexSetId"),
+    getString(recognizedFields, "set_id"),
+  ]) ?? "";
+  const localId = firstString([
+    getString(card, "collector_number"),
+    getString(card, "local_id"),
+    getString(recognizedFields, "collector_number"),
+  ]) ?? "";
+  const name = firstString([
+    getString(card, "name"),
+    getString(recognizedFields, "name"),
+  ]) ?? "";
+  const language = firstString([
+    getString(card, "language"),
+    getString(recognizedFields, "language"),
+  ]);
+  const evidenceRecord = firstRecord([readPath(candidate, ["evidence"])]) ?? {};
+
+  return {
+    card: {
+      cardNumber: localId,
+      id: getString(card, "id") ?? canonicalPrintUid ?? `${setId}-${localId}`,
+      imageUrl: getString(card, "image_url") ?? getString(card, "imageUrl") ?? "",
+      language: language ?? "ja",
+      name,
+      setName:
+        getString(card, "set_name") ??
+        getString(card, "setName") ??
+        getString(recognizedFields, "set_name") ??
+        "",
+      source: "tcgdex",
+      tcgDexSetId: setId,
+    },
+    confidence: clamp(Number(getNumber(candidate, "score") ?? getNumber(root, "match_confidence") ?? 0), 0.1, 0.99),
+    evidence: {
+      canonicalPrintUid,
+      cardNumber: localId,
+      language: language === "en" ? "en" : "ja",
+      name,
+      setCode: setId,
+      setName:
+        getString(card, "set_name") ??
+        getString(card, "setName") ??
+        getString(recognizedFields, "set_name"),
+    },
+    query: [setId, localId, name].filter(Boolean).join(" "),
+    source: "local-image",
+    canonicalPrintUid,
+    recognitionEvidence: numericRecord(evidenceRecord),
+    marketplaces: firstRecord([readPath(candidate, ["marketplaces"])]) as
+      | CardRecognitionContract
+      | undefined,
+  };
 }
 
 async function assertPathExists(value: string, message: string): Promise<void> {
@@ -797,6 +914,27 @@ function getNumber(
   }
 
   return undefined;
+}
+
+function numericRecord(record: Record<string, unknown>): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, value]) => {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return [key, value] as const;
+        }
+
+        if (typeof value === "string") {
+          const parsed = Number.parseFloat(value);
+          if (Number.isFinite(parsed)) {
+            return [key, parsed] as const;
+          }
+        }
+
+        return undefined;
+      })
+      .filter((entry): entry is readonly [string, number] => Boolean(entry)),
+  );
 }
 
 function firstString(values: Array<string | undefined>): string | undefined {

@@ -12,11 +12,14 @@ export type CardScanEvidence = {
   setName?: string;
   cardNumber?: string;
   language?: "ja" | "en";
+  canonicalPrintUid?: string;
   rawText?: string;
   priceYen?: number;
   psaCert?: string;
   giblIdentity?: string;
 };
+
+export type CardRecognitionContract = Record<string, unknown>;
 
 export type CardScanCandidate = {
   query: string;
@@ -24,6 +27,9 @@ export type CardScanCandidate = {
   source: CardScanSource;
   card?: CardSearchResult;
   evidence: CardScanEvidence;
+  canonicalPrintUid?: string;
+  recognitionEvidence?: Record<string, number>;
+  marketplaces?: CardRecognitionContract;
 };
 
 export type CardScanResponse = {
@@ -32,6 +38,7 @@ export type CardScanResponse = {
   yenPrice?: number;
   psaCert?: string;
   rawText?: string;
+  recognition?: CardRecognitionContract;
   providersTried: CardScanSource[];
   warnings: string[];
 };

@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
@@ -19,6 +20,7 @@ def fetch_japanese_cards(
     language: str = "ja",
     max_sets: int | None = None,
     set_ids: list[str] | None = None,
+    latest_first: bool = False,
 ) -> list[CardMetadata]:
     cache = Path(cache_dir)
     metadata_dir = cache / "metadata" / language
@@ -35,6 +37,12 @@ def fetch_japanese_cards(
         )
         if not isinstance(sets, list):
             raise ValueError("TCGdex sets response was not a list")
+        if latest_first:
+            sets = sorted(
+                sets,
+                key=lambda item: str(item.get("releaseDate", "")) if isinstance(item, dict) else "",
+                reverse=True,
+            )
 
     cards: list[CardMetadata] = []
     indexed_sets = 0
@@ -44,7 +52,7 @@ def fetch_japanese_cards(
 
         set_id = str(set_record["id"])
         set_detail = fetch_json_cached(
-            f"{TCGDEX_BASE_URL}/{language}/sets/{set_id}",
+            f"{TCGDEX_BASE_URL}/{language}/sets/{url_segment(set_id)}",
             metadata_dir / f"set-{safe_file_name(set_id)}.json",
         )
         if not isinstance(set_detail, dict):
@@ -61,7 +69,7 @@ def fetch_japanese_cards(
                 continue
 
             card_detail = fetch_json_cached(
-                f"{TCGDEX_BASE_URL}/{language}/cards/{card_id}",
+                f"{TCGDEX_BASE_URL}/{language}/cards/{url_segment(card_id)}",
                 metadata_dir / f"card-{safe_file_name(card_id)}.json",
             )
             if not isinstance(card_detail, dict):
@@ -88,6 +96,11 @@ def fetch_japanese_cards(
                     image_url=image_url,
                     image_path=str(image_path),
                     language=language,
+                    printed_total=str(read_path(card_detail, ["set", "cardCount", "official"]) or ""),
+                    variant_class=variant_class(card_detail),
+                    rarity=str(card_detail.get("rarity") or ""),
+                    regulation_mark=str(card_detail.get("regulationMark") or ""),
+                    tcgdex_id=card_id,
                 ),
             )
 
@@ -134,6 +147,10 @@ def safe_file_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", value)
 
 
+def url_segment(value: str) -> str:
+    return quote(value, safe="")
+
+
 def read_path(value: dict[str, Any], path: list[str]) -> Any:
     current: Any = value
     for key in path:
@@ -141,3 +158,19 @@ def read_path(value: dict[str, Any], path: list[str]) -> Any:
             return None
         current = current.get(key)
     return current
+
+
+def variant_class(card_detail: dict[str, Any]) -> str:
+    variants = card_detail.get("variants")
+    if not isinstance(variants, dict):
+        return "standard"
+
+    for key in ("firstEdition", "reverse", "holo"):
+        if variants.get(key):
+            return {
+                "firstEdition": "first-edition",
+                "reverse": "reverse",
+                "holo": "holo",
+            }[key]
+
+    return "standard"

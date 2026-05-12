@@ -15,12 +15,14 @@ def build_reference_index(
     language: str = "ja",
     max_sets: int | None = None,
     set_ids: list[str] | None = None,
+    latest_first: bool = False,
 ) -> Path:
     cards = fetch_japanese_cards(
         cache_dir,
         language=language,
         max_sets=max_sets,
         set_ids=set_ids,
+        latest_first=latest_first,
     )
     fingerprints: list[ImageFingerprint] = []
 

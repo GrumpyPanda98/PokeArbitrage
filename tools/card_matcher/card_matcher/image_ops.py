@@ -21,10 +21,31 @@ class NormalizedCardImage:
 
 
 def load_bgr_image(path: str | Path) -> np.ndarray:
-    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    image = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        image = load_bgr_image_with_pillow(path)
     if image is None:
         raise ValueError(f"Could not read image: {path}")
     return image
+
+
+def load_bgr_image_with_pillow(path: str | Path) -> np.ndarray | None:
+    try:
+        with Image.open(path) as pil_image:
+            rgb = pil_image.convert("RGB")
+            return cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2BGR)
+    except Exception:
+        return None
+
+
+def write_bgr_image(path: str | Path, image: np.ndarray) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    suffix = destination.suffix or ".jpg"
+    ok, encoded = cv2.imencode(suffix, image)
+    if not ok:
+        raise ValueError(f"Could not encode image: {path}")
+    encoded.tofile(str(destination))
 
 
 def normalize_card_image(image: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -196,7 +217,7 @@ def save_normalized_candidates(
     paths: list[Path] = []
     for index, candidate in enumerate(normalize_card_image_candidates(image), start=1):
         path = destination / f"{prefix}-{index:02d}-{candidate.label}.jpg"
-        cv2.imwrite(str(path), candidate.image)
+        write_bgr_image(path, candidate.image)
         paths.append(path)
     return paths
 

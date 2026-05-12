@@ -39,26 +39,36 @@ def main() -> None:
     outcomes = []
 
     for image_path, expected_card_id in rows:
-        matches = matcher.match(image_path, top=max(args.top, 10))
+        matches = matcher.match(image_path, top=max(args.top, 20))
         ranked_ids = [match.card.id for match in matches]
+        rank = ranked_ids.index(expected_card_id) + 1 if expected_card_id in ranked_ids else None
         outcomes.append(
             {
                 "image_path": image_path,
                 "expected_card_id": expected_card_id,
                 "top1": ranked_ids[0] if ranked_ids else "",
                 "hit_top1": bool(ranked_ids and ranked_ids[0] == expected_card_id),
+                "hit_top5": expected_card_id in ranked_ids[:5],
+                "hit_top20": expected_card_id in ranked_ids[:20],
                 f"hit_top{args.top}": expected_card_id in ranked_ids[: args.top],
+                "rank": rank,
+                "reciprocal_rank": 1 / rank if rank else 0,
                 "matches": [match.to_json() for match in matches[: args.top]],
             },
         )
 
     top1_hits = sum(1 for item in outcomes if item["hit_top1"])
+    top5_hits = sum(1 for item in outcomes if item["hit_top5"])
+    top20_hits = sum(1 for item in outcomes if item["hit_top20"])
     topn_key = f"hit_top{args.top}"
     topn_hits = sum(1 for item in outcomes if item[topn_key])
     summary = {
         "count": len(outcomes),
         "top1_accuracy": top1_hits / len(outcomes) if outcomes else 0,
+        "top5_accuracy": top5_hits / len(outcomes) if outcomes else 0,
+        "top20_accuracy": top20_hits / len(outcomes) if outcomes else 0,
         f"top{args.top}_accuracy": topn_hits / len(outcomes) if outcomes else 0,
+        "mrr": sum(float(item["reciprocal_rank"]) for item in outcomes) / len(outcomes) if outcomes else 0,
         "outcomes": outcomes,
     }
 
@@ -69,7 +79,9 @@ def main() -> None:
     print(
         f"Images: {summary['count']} | "
         f"Top-1: {summary['top1_accuracy']:.1%} | "
-        f"Top-{args.top}: {summary[f'top{args.top}_accuracy']:.1%}"
+        f"Top-5: {summary['top5_accuracy']:.1%} | "
+        f"Top-20: {summary['top20_accuracy']:.1%} | "
+        f"MRR: {summary['mrr']:.3f}"
     )
     for outcome in outcomes:
         print(

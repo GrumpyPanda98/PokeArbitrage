@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 from .models import CardMetadata, ImageFingerprint
@@ -26,12 +27,14 @@ def index_path(cache_dir: str | Path, language: str) -> Path:
 
 
 def load_index(path: str | Path) -> CardIndex:
-    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    index_file = Path(path)
+    value = json.loads(index_file.read_text(encoding="utf-8"))
     if value.get("version") != INDEX_VERSION:
         raise ValueError(f"Unsupported index version: {value.get('version')}")
 
+    cards = [CardMetadata.from_json(item) for item in value.get("cards", [])]
     return CardIndex(
-        cards=[CardMetadata.from_json(item) for item in value.get("cards", [])],
+        cards=resolve_relative_image_paths(cards, index_file),
         fingerprints=[
             ImageFingerprint.from_json(item) for item in value.get("fingerprints", [])
         ],
@@ -57,3 +60,19 @@ def save_index(path: str | Path, index: CardIndex) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def resolve_relative_image_paths(cards: list[CardMetadata], index_file: Path) -> list[CardMetadata]:
+    root = index_file.parent.parent
+    resolved: list[CardMetadata] = []
+    for card in cards:
+        image_path = Path(card.image_path)
+        if image_path.is_absolute() or image_path.exists():
+            resolved.append(card)
+            continue
+
+        candidate = root / image_path
+        resolved.append(
+            replace(card, image_path=str(candidate if candidate.exists() else image_path)),
+        )
+    return resolved

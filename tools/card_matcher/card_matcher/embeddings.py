@@ -7,8 +7,9 @@ from typing import Iterable
 import cv2
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
-from .image_ops import load_bgr_image, normalize_card_image, normalize_card_image_candidates
+from .image_ops import load_bgr_image, normalize_card_image, normalize_card_image_candidates, orient_portrait, resize_card
 from .index_store import CardIndex
 
 
@@ -121,18 +122,38 @@ def build_embedding_index(
     index: CardIndex,
     model: GpuEmbeddingModel,
     batch_size: int = 16,
+    clean_scans: bool = False,
 ) -> EmbeddingIndex:
     valid_cards = [card for card in index.cards if Path(card.image_path).exists()]
     card_ids: list[str] = []
-    images: list[np.ndarray] = []
-    for card in valid_cards:
-        image = load_bgr_image(card.image_path)
-        normalized, _ = normalize_card_image(image)
-        for variant in reference_embedding_variants(normalized):
-            card_ids.append(card.id)
-            images.append(variant)
+    vector_batches: list[np.ndarray] = []
+    image_batch: list[np.ndarray] = []
+    id_batch: list[str] = []
 
-    embeddings = model.embed_bgr_images(images, batch_size=batch_size)
+    def flush() -> None:
+        if not image_batch:
+            return
+        vector_batches.append(model.embed_bgr_images(image_batch, batch_size=batch_size))
+        card_ids.extend(id_batch)
+        image_batch.clear()
+        id_batch.clear()
+
+    for card in tqdm(valid_cards, desc="Embedding reference cards"):
+        image = load_bgr_image(card.image_path)
+        normalized = resize_card(orient_portrait(image)) if clean_scans else normalize_card_image(image)[0]
+        for variant in reference_embedding_variants(normalized):
+            id_batch.append(card.id)
+            image_batch.append(variant)
+            if len(image_batch) >= batch_size:
+                flush()
+
+    flush()
+
+    embeddings = (
+        np.vstack(vector_batches).astype(np.float32)
+        if vector_batches
+        else np.empty((0, 0), dtype=np.float32)
+    )
     return EmbeddingIndex(
         card_ids=card_ids,
         embeddings=embeddings,

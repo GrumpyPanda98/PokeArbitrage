@@ -1,0 +1,1541 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{amsmath}
+
+\geometry{margin=1in}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue,
+  citecolor=blue
+}
+\urlstyle{same}
+
+\lstdefinestyle{reportcode}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.2pt,
+  rulecolor=\color{black!30},
+  backgroundcolor=\color{black!3}
+}
+\lstset{style=reportcode}
+
+\setlist[itemize]{leftmargin=1.4em}
+\setlist[enumerate]{leftmargin=1.6em}
+\renewcommand{\arraystretch}{1.18}
+
+\title{PokeArb Japan: Full Application Architecture and Vision System Report}
+\author{Local project report}
+\date{May 12, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report documents the current PokeArb Japan application from the user interface down through the Next.js API layer, pricing integrations, OCR, local card identification, embedding retrieval, reranking, and operational setup. It is written from the inspected code in the V2 worktree and focuses on how the app actually works today, not only on the intended roadmap. The most important design point is that the app is not just a price calculator and it is not just an image classifier. It is a local deal-assistance system: a mobile-first frontend captures shop photos, backend routes normalize the request, OCR extracts yen prices, a local retrieval engine identifies Pokemon cards from real photos, pricing sources estimate raw and graded reference values, and the calculator turns those values into a buy/maybe/skip decision.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Executive Summary}
+
+PokeArb Japan is a mobile-first web application for checking Pokemon card deals while shopping in Japan. The user can scan or search a card, enter or OCR a yen price, fetch reference market values, and get a route-aware decision for raw flipping, grading to PSA 9, grading to PSA 10, or buying already graded slabs.
+
+The application has three major technical systems:
+
+\begin{enumerate}
+  \item A Next.js/React frontend that manages the app screens, local state, theme system, camera uploads, scan results, deal calculations, and saved history.
+  \item A backend API layer implemented as Next.js route handlers. These routes call card search, reference pricing, local GPU price OCR, local card recognition, Cardmarket live scraping, and reverse geocoding helpers.
+  \item A Python vision stack under \path{tools/card_matcher} and \path{tools/price_ocr_server}. The card matcher uses OpenCV crop normalization, perceptual hashes, color histograms, ORB feature matching, DINOv2 embeddings, optional PaddleOCR card ROI features, and a weighted reranker. The price OCR server uses PaddleOCR on GPU and specialized price-tag crops.
+\end{enumerate}
+
+The strongest part of the current design is that card recognition is a retrieval system instead of a giant end-to-end classifier. A reference gallery is built from official card images. Each reference card receives visual fingerprints and DINOv2 embeddings. A shop photo is cropped and normalized, embedded, compared to the reference gallery, and reranked. This makes the system maintainable: adding more cards is mostly a matter of syncing metadata, downloading reference images, and rebuilding fingerprints/embeddings, rather than retraining a classifier over every print.
+
+The most important current limitation is that full Japanese coverage is now based on the official Japanese card search gallery, but the official gallery currently stores the official card ID as the local identity for many cards. It gives broad visual coverage, but the printed collector number and exact marketplace-ready print identity still need richer parsing from detail pages or another metadata reconciliation layer. Also, the optional card ROI OCR and future set-symbol/variant classifiers are not yet fully integrated into the hosted scan path by default.
+
+\section{Repository and Runtime Context}
+
+The current implementation described here lives in the V2 worktree:
+
+\begin{itemize}
+  \item Main application: \path{src/app/page.tsx}
+  \item Global styling and themes: \path{src/app/globals.css}
+  \item TypeScript business logic: \path{src/lib}
+  \item Next.js API routes: \path{src/app/api}
+  \item Card matcher: \path{tools/card_matcher}
+  \item GPU price OCR sidecar: \path{tools/price_ocr_server}
+  \item Cardmarket live pricing sidecar: \path{tools/cardmarket_server}
+\end{itemize}
+
+The package stack is:
+
+\begin{longtable}{p{0.28\linewidth} p{0.62\linewidth}}
+\toprule
+Area & Main dependency or tool \\
+\midrule
+Frontend framework & Next.js 16.2.5, React 19.2.4, React DOM 19.2.4 \\
+Styling & Tailwind 4 via \path{@tailwindcss/postcss}, custom CSS in \path{globals.css} \\
+Glass theme & \path{liquid-glass-react} 1.1.1 \\
+Icons & \path{lucide-react} 1.14.0 \\
+Browser OCR fallback & \path{tesseract.js} 7.0.0 \\
+Tests & Vitest 4.0.15 \\
+Python card matcher & OpenCV, Pillow, ImageHash, NumPy, Requests, tqdm \\
+GPU embedding extras & PyTorch in the Conda \path{MNE} environment, Transformers, Safetensors \\
+GPU OCR & PaddleOCR, configured for PP-OCRv5 server detection and recognition models \\
+Optional vector store & FAISS helper exists, while the MVP still uses a NumPy \path{.npz} embedding matrix \\
+\bottomrule
+\end{longtable}
+
+The app is intended to be hosted on port 3000 for phone testing. The local matcher is configured through environment variables such as:
+
+\begin{lstlisting}
+LOCAL_CARD_MATCHER_DIR=tools/card_matcher
+LOCAL_CARD_MATCHER_PYTHON=%USERPROFILE%\anaconda3\envs\MNE\python.exe
+LOCAL_CARD_MATCHER_INDEX=tools/card_matcher/cache/ja_official_image_index.json
+LOCAL_CARD_MATCHER_EMBEDDING_INDEX=tools/card_matcher/cache/ja_official_embeddings_facebook_dinov2-base.npz
+LOCAL_CARD_MATCHER_SCRIPT=match_card_v2.py
+LOCAL_CARD_MATCHER_TOP=8
+LOCAL_CARD_MATCHER_TIMEOUT_MS=300000
+LOCAL_CARD_MATCHER_DEVICE=cuda
+PRICE_OCR_URL=http://127.0.0.1:8765/ocr-price
+\end{lstlisting}
+
+\section{Application Purpose}
+
+The app answers a practical in-store question: if a card in a Japanese shop costs a certain yen amount, is it worth buying after currency conversion, selling fees, grading fees, and market uncertainty?
+
+The user workflow is:
+
+\begin{enumerate}
+  \item Open the web app on a phone.
+  \item Scan a card or manually search/select one.
+  \item Scan or enter the shop price in yen.
+  \item Fetch raw and graded reference values.
+  \item Choose raw or graded in-hand condition.
+  \item Let the calculator evaluate routes.
+  \item Save good deals into history.
+\end{enumerate}
+
+The app is not trying to be a complete inventory manager yet. It is optimized for fast, repeated decision-making in shops where the user may only have a few seconds per card.
+
+\section{High-Level System Architecture}
+
+The current architecture can be summarized as:
+
+\begin{lstlisting}
+Phone browser / desktop browser
+  |
+  | React UI, localStorage state, camera/file upload
+  v
+Next.js app route handlers
+  |
+  | /api/scan-card          -> local Python card matcher, optional cloud providers
+  | /api/price-ocr          -> local PaddleOCR GPU price sidecar
+  | /api/card-search        -> TCGdex, PokemonTCG, TCGTracking search
+  | /api/reference-prices   -> Cardmarket, TCGdex, PokemonTCG, PokePrices, PriceCharting
+  | /api/reverse-geocode    -> store/city helper
+  v
+Local and external services
+  |
+  | tools/card_matcher      -> OpenCV + DINOv2 + reranker
+  | tools/price_ocr_server  -> PaddleOCR price OCR
+  | tools/cardmarket_server -> logged-in Cardmarket live listing lookup
+  | public APIs/sites       -> TCGdex, PokemonTCG, PokePrices, PriceCharting
+\end{lstlisting}
+
+The browser is intentionally thin for expensive vision work. It can run Tesseract as a fallback, but the serious OCR and image retrieval run server-side so the RTX 5090 and the local cache can be used.
+
+\section{Frontend Architecture}
+
+\subsection{Main File}
+
+The main UI is in \path{src/app/page.tsx}. It is a client component and contains the primary app state, screen rendering, scanner components, settings, history, theme selector, and liquid glass wrappers.
+
+Important frontend functions and components include:
+
+\begin{longtable}{p{0.33\linewidth} p{0.57\linewidth}}
+\toprule
+Component or function & Responsibility \\
+\midrule
+\path{App} & Root client component. Loads persistent state, manages current screen, theme, liquid background, settings, history, and deal form. \\
+\path{useLiquidMotionState} & Tracks scrolling/motion values used by the liquid theme so glass surfaces can react to page movement. \\
+\path{LiquidGlassSurface} & Wrapper around \path{liquid-glass-react}. Gives repeated app surfaces the same glass behavior while preserving content layout. \\
+\path{AppHeader} & Shows app title and lock button. \\
+\path{HomeScreen} & Entry screen with conversion summary and shortcuts to deal, PSA, and history. \\
+\path{DealCheckScreen} & Core deal calculator and scanner screen. \\
+\path{DealPhotoScanner} & Handles camera/file upload, parallel card scan and price OCR, and applies scan results back to the deal form. \\
+\path{HistoryScreen} & Displays saved deals from local storage. \\
+\path{SettingsScreen} & Exposes formula settings, theme selector, liquid background options, raw condition/language filters. \\
+\path{PsaSlabScreen} & PSA slab workflow and cert/card input. \\
+\bottomrule
+\end{longtable}
+
+\subsection{Screens}
+
+The screen type is defined in \path{src/lib/types.ts}:
+
+\begin{lstlisting}
+export type Screen =
+  | "home"
+  | "deal-check"
+  | "psa"
+  | "history"
+  | "settings";
+\end{lstlisting}
+
+The app is a single page application, not a multi-page route tree. That is appropriate here because the interaction is stateful and repeated: the user moves between Deal, History, and Settings while keeping the same current card/deal context.
+
+\subsection{Local State}
+
+Persistent state uses localStorage through \path{src/lib/storage.ts}. The helper \path{useLocalStorageState} is implemented with \path{useSyncExternalStore}, which means it supports React's external store semantics and also reacts to cross-tab storage events.
+
+Stored app keys include:
+
+\begin{itemize}
+  \item unlocked/lock state
+  \item settings
+  \item theme
+  \item selected liquid background
+  \item history
+  \item store/city context
+\end{itemize}
+
+The frontend stores user-facing state locally because the app is meant to run as a personal tool on the user's machine/phone. There is no database-backed multi-user account model in the current code.
+
+\subsection{Camera and Scanner UX}
+
+The deal scanner is triggered from \path{DealPhotoScanner}. When a file/photo is selected, the frontend runs multiple recognition tasks in parallel:
+
+\begin{lstlisting}
+Promise.allSettled([
+  scanCardImage(file),
+  scanPriceImage(file).catch(...),
+  recognizePriceText(file).catch(...),
+])
+\end{lstlisting}
+
+That design matters because card identity and price OCR are independent. A photo may identify the card but fail price OCR, or price OCR may succeed while the card match needs manual selection. The UI merges what succeeds instead of making the whole scan fail.
+
+\subsection{Theme System}
+
+The theme type is:
+
+\begin{lstlisting}
+type ThemeName = "graphite" | "wooper" | "paper" | "liquid";
+\end{lstlisting}
+
+The non-liquid themes are mostly CSS variable skins. The liquid theme is deeper: it changes the background, app surfaces, navigation, buttons, inputs, lock button, search portal, and app chrome. The global CSS contains a shared glass layer and then liquid-specific overrides under \path{[data-theme="liquid"]}.
+
+The liquid theme uses \path{liquid-glass-react} through \path{LiquidGlassSurface}. This matters because a convincing glass effect needs more than a translucent background color. The current app wraps surfaces in a reusable glass component so that panels, nav buttons, and nested surfaces can share a consistent refraction model.
+
+\section{Frontend Styling and Liquid Theme}
+
+The style system is centralized in \path{src/app/globals.css}. It has:
+
+\begin{itemize}
+  \item app-wide CSS variables for color, foreground, muted text, borders, inputs, panels, and accent colors;
+  \item base utility classes such as panel, input shell, bottom nav, decision surface, and lock button;
+  \item theme-specific blocks for graphite, wooper, paper, and liquid;
+  \item special liquid selectors for glass panels, nested glass, bottom navigation, search result portal, theme options, inputs, buttons, and the lock button.
+\end{itemize}
+
+The liquid theme also introduces a background image variable:
+
+\begin{lstlisting}
+--liquid-background-image
+--liquid-background-position
+--liquid-background-size
+\end{lstlisting}
+
+The goal is that the background exists once, behind the application, and the cells/panels refract it. The frontend then lets the user select a background from the liquid background options. This is important because glassmorphism only reads as glass if there is meaningful content behind the surface. A flat color behind a translucent panel just looks like opacity.
+
+The theme work has also created a useful rule for future UI: if a surface is meant to look like glass, it should be wrapped by \path{LiquidGlassSurface} instead of duplicating border/background CSS manually. Manual overlays can produce the "two boxes" problem where one opaque cell is visible behind a glass layer.
+
+\section{Deal Calculation Model}
+
+The business logic is in \path{src/lib/calculations.ts}. This is the app's financial core.
+
+\subsection{Default Settings}
+
+The default settings include:
+
+\begin{itemize}
+  \item yen divisor: 25
+  \item selling fee: 5 percent
+  \item buy threshold: 30 percent
+  \item maybe threshold: 15 percent
+  \item PSA grading fee: 220 DKK
+\end{itemize}
+
+The currency conversion formula is deliberately simple:
+
+\[
+\text{costDkk} = \frac{\text{shopPriceYen}}{\text{yenDivisor}}
+\]
+
+At the default divisor, 1,000 yen becomes 40 DKK.
+
+\subsection{Margin Formula}
+
+The calculator first applies the selling fee to the market value:
+
+\[
+\text{netMarketValueDkk} = \text{marketValueDkk} \times (1 - \text{sellingFee})
+\]
+
+Then it computes profit and margin:
+
+\[
+\text{profitDkk} = \text{netMarketValueDkk} - \text{costDkk}
+\]
+
+\[
+\text{marginPercent} =
+\begin{cases}
+100 \times \frac{\text{profitDkk}}{\text{costDkk}}, & \text{if costDkk} > 0\\
+0, & \text{otherwise}
+\end{cases}
+\]
+
+\subsection{Routes}
+
+The route model is important. The app does not only ask "is this card worth more than the shop price?" It asks which exit route is plausible:
+
+\begin{longtable}{p{0.26\linewidth} p{0.29\linewidth} p{0.35\linewidth}}
+\toprule
+In-hand condition & Candidate route & Extra cost \\
+\midrule
+Raw & Raw flip & No grading fee \\
+Raw & Grade to PSA 9 & Add grading fee \\
+Raw & Grade to PSA 10 & Add grading fee \\
+PSA 9 slab & PSA 9 slab resale & No grading fee \\
+PSA 10 slab & PSA 10 slab resale & No grading fee \\
+\bottomrule
+\end{longtable}
+
+The route thresholds are not all the same. Raw grading routes require higher margin because they are riskier. Slab routes can tolerate lower margin because grade uncertainty is already resolved.
+
+\subsection{Warnings}
+
+The calculator emits warnings so that a single green decision cannot hide important risk:
+
+\begin{longtable}{p{0.24\linewidth} p{0.66\linewidth}}
+\toprule
+Warning & Meaning \\
+\midrule
+\path{VALUES_MISSING} & The app does not have enough market values to calculate a meaningful decision. \\
+\path{PSA_10_TRAP} & Raw card only looks good if PSA 10 happens, while PSA 9/raw routes do not support the purchase. \\
+\path{HIGH_END_RISK} & High-cost cards can be capped from BUY to MAYBE because the downside is larger. \\
+\path{MANUAL_VALUES} & The user manually overrode values. The result is still valid but should be read as user-supplied. \\
+\bottomrule
+\end{longtable}
+
+These warnings are covered by tests in \path{src/lib/calculations.test.ts}.
+
+\section{Next.js Backend API Layer}
+
+The backend is implemented with App Router route handlers under \path{src/app/api}. The app uses route handlers instead of separate Express/FastAPI for the TypeScript side because the API endpoints are closely coupled to frontend types and app state.
+
+\begin{longtable}{p{0.31\linewidth} p{0.59\linewidth}}
+\toprule
+Route & Role \\
+\midrule
+\path{/api/card-search} & GET endpoint for manual card search. Calls \path{searchTcgDexCards}. Caches search promises for 10 minutes. \\
+\path{/api/reference-prices} & POST endpoint. Accepts a card and optional filters, then calls \path{fetchReferencePricesServer}. \\
+\path{/api/scan-card} & POST endpoint. Accepts an image file, validates it, and calls the local/card-provider scan pipeline. Uses Node runtime because it spawns Python. \\
+\path{/api/price-ocr} & POST endpoint. Accepts an image file and proxies it to the local PaddleOCR GPU sidecar. Falls back to parsed text fields if needed. \\
+\path{/api/cardmarket/raw-price} & Cardmarket raw price helper endpoint. \\
+\path{/api/reverse-geocode} & Store/city helper endpoint. \\
+\bottomrule
+\end{longtable}
+
+The route handlers generally follow a thin-controller pattern: validate inputs, call a library function, return JSON. Most logic lives under \path{src/lib}, which keeps it testable.
+
+\section{Manual Card Search}
+
+Manual search is implemented in \path{src/lib/tcgdex.ts}. Despite the filename, it is not only TCGdex. It can combine:
+
+\begin{itemize}
+  \item TCGdex card and set endpoints;
+  \item PokemonTCG API search for English cards;
+  \item TCGTracking set/product data for some marketplace-oriented mappings;
+  \item hard-coded and dynamic set aliases.
+\end{itemize}
+
+The parser extracts:
+
+\begin{itemize}
+  \item collector/local ID;
+  \item name tokens;
+  \item known set aliases;
+  \item preferred set ID;
+  \item language bucket;
+  \item TCGTracking set IDs.
+\end{itemize}
+
+The score function rewards exact collector matches, known set matches, preferred language, name token matches, and source confidence. It also includes recency scoring for collector-only searches, which is useful when a shop label or OCR produces only a number.
+
+This search layer is important as both a manual fallback and as a resolver for OCR-derived text candidates.
+
+\section{Reference Pricing System}
+
+\subsection{Main Merge Function}
+
+Reference pricing is coordinated in \path{src/lib/reference-prices.server.ts}. The central function is \path{fetchReferencePricesServer}. It runs several sources in parallel:
+
+\begin{itemize}
+  \item live Cardmarket pricing, if enabled;
+  \item TCGdex pricing hashes;
+  \item PokemonTCG API pricing fields;
+  \item PokePrices;
+  \item PriceCharting, especially for graded PSA values.
+\end{itemize}
+
+The first parallel pass asks Cardmarket live, TCGdex, PokemonTCG, and PokePrices. If PSA values are still missing, it then asks PriceCharting. This ordering keeps the app responsive while still giving graded references when available.
+
+\subsection{Currency Conversion}
+
+The code uses:
+
+\begin{itemize}
+  \item EUR to DKK: 7.46
+  \item USD to DKK: 7.00
+\end{itemize}
+
+These are simple fixed conversion constants, not a live FX feed. That is acceptable for a fast shopping tool but should be revisited if precision matters.
+
+\subsection{Source Priority}
+
+Raw prices are selected by source priority:
+
+\begin{lstlisting}
+cardmarket -> tcgplayer -> pokeprices -> pricecharting
+\end{lstlisting}
+
+PSA values are selected mostly from:
+
+\begin{lstlisting}
+pricecharting
+pokeprices
+\end{lstlisting}
+
+depending on grade and source availability.
+
+\subsection{Cardmarket Live Pricing}
+
+Live Cardmarket pricing is in \path{src/lib/cardmarket-live.ts} plus the Python sidecar \path{tools/cardmarket_server/server.py}.
+
+The TypeScript adapter builds a request containing:
+
+\begin{itemize}
+  \item card name;
+  \item collector number;
+  \item Cardmarket product ID if known;
+  \item language filter;
+  \item minimum condition filter;
+  \item search URL and query.
+\end{itemize}
+
+The Python sidecar logs into Cardmarket with Playwright, maintains a browser/cookie session, uses \path{curl_cffi} where possible, falls back to a browser page when needed, resolves the product page, applies language and condition URL filters, parses listings with BeautifulSoup, and returns the lowest matching listing.
+
+This sidecar exists because direct marketplace API access is not assumed. It is powerful but operationally sensitive: it depends on credentials, session state, Cloudflare behavior, and HTML structure.
+
+\subsection{TCGdex Pricing}
+
+TCGdex details may include Cardmarket and TCGplayer aggregate prices. The app maps Cardmarket EUR values to raw DKK and TCGplayer USD values to raw DKK. When the user selected language or condition filters, the app prefers filtered Cardmarket listings if available and marks aggregate values as less exact.
+
+There is a specific correction for some Japanese Scarlet/Violet secret ex cards where the non-holo aggregate can appear two decimals too low. The tests in \path{reference-prices.server.test.ts} cover this behavior.
+
+\subsection{PokemonTCG API Pricing}
+
+PokemonTCG is used mainly for English cards. It exposes TCGplayer and Cardmarket hashes for many cards. The app fetches card details by PokemonTCG ID when available and maps the best representative market value into DKK.
+
+\subsection{PokePrices}
+
+PokePrices is used for non-Asian cards. The code can query PokePrices' public Supabase RPC and scrape page metadata as a fallback. For some Japanese cards that correspond to English sets such as 151, Shiny Treasure/Paldean Fates, or Terastal/Prismatic, it contains helper logic to find English equivalents using TCGdex detail fields such as illustrator, HP, stage, type, and attack signature. However, the default policy avoids using English PokePrices pages for Asian-language cards unless a careful equivalent mapping is established.
+
+\subsection{PriceCharting}
+
+PriceCharting is the primary fallback for graded values. The app builds direct URLs when it can and search URLs when direct URLs are unsafe. It parses cells for raw, PSA 7, PSA 8, PSA 9, PSA 9.5, and PSA 10 values. Asian-language cards get special handling because PriceCharting distinguishes Japanese/Korean/Chinese pages.
+
+\section{Price OCR Scanner}
+
+There are two price OCR paths:
+
+\begin{enumerate}
+  \item GPU server OCR via PaddleOCR through \path{/api/price-ocr}.
+  \item Browser fallback OCR via Tesseract in \path{src/lib/ocr.ts}.
+\end{enumerate}
+
+\subsection{Frontend Flow}
+
+When a deal photo is uploaded, the frontend calls \path{scanPriceImage(file)} and also runs \path{recognizePriceText(file)} as a fallback. This lets the app recover if the local GPU price sidecar is down.
+
+\subsection{Next.js Price OCR Route}
+
+\path{src/app/api/price-ocr/route.ts} validates:
+
+\begin{itemize}
+  \item the uploaded field exists;
+  \item it is an image;
+  \item it is under 10 MB.
+\end{itemize}
+
+Then it posts the file to:
+
+\begin{lstlisting}
+PRICE_OCR_URL or http://127.0.0.1:8765/ocr-price
+\end{lstlisting}
+
+If the sidecar returns text and candidates, the route normalizes the response and chooses a yen price from:
+
+\begin{itemize}
+  \item explicit \path{yenPrice} from the sidecar;
+  \item numeric \path{prices};
+  \item parsed yen prices from returned text.
+\end{itemize}
+
+\subsection{GPU Price OCR Sidecar}
+
+The sidecar is \path{tools/price_ocr_server/server.py}. It exposes:
+
+\begin{itemize}
+  \item \path{/health}
+  \item \path{/ocr-price}
+\end{itemize}
+
+The OCR engine is lazily initialized:
+
+\begin{lstlisting}
+PaddleOCR(
+  device=os.getenv("POKEARB_PRICE_OCR_DEVICE", "gpu:0"),
+  lang=os.getenv("POKEARB_PRICE_OCR_LANG", "japan"),
+  text_detection_model_name="PP-OCRv5_server_det",
+  text_recognition_model_name="PP-OCRv5_server_rec",
+  use_doc_orientation_classify=False,
+  use_doc_unwarping=False,
+  use_textline_orientation=False,
+)
+\end{lstlisting}
+
+This is a deep learning OCR model stack. It has a text detector and text recognizer. It is not trained specifically on Pokemon cards, but it is strong enough to read common shop price tags.
+
+\subsection{White Price Tag Detection}
+
+Before OCR, the sidecar builds regions:
+
+\begin{enumerate}
+  \item full image;
+  \item up to several white price-tag crops.
+\end{enumerate}
+
+The crop detector looks for bright, low-saturation connected components with price-tag-like aspect ratios. It resizes large images down to a max dimension of 640 for detection, builds a binary mask of bright neutral pixels, finds connected components, filters by area/aspect/fill ratio, expands bounding boxes, and OCRs each crop.
+
+This is a good pragmatic approach because Japanese shop stickers are often white or light colored and contain the price text in a concentrated region. OCR on the full photo can be distracted by card text and attacks; OCR on a likely sticker is much cleaner.
+
+\subsection{Yen Candidate Extraction}
+
+Both the Python sidecar and browser fallback use yen-specific extraction logic. They score candidates based on:
+
+\begin{itemize}
+  \item labels such as tax-included, price, JPY, yen symbol, or yen word;
+  \item whether the number has grouping separators;
+  \item whether OCR confidence exists;
+  \item whether the text came from a white-tag region;
+  \item bounding box size;
+  \item plausible yen range.
+\end{itemize}
+
+The parser handles common OCR confusions:
+
+\begin{longtable}{p{0.25\linewidth} p{0.25\linewidth} p{0.4\linewidth}}
+\toprule
+OCR text & Interpreted as & Reason \\
+\midrule
+O or o & 0 & common OCR confusion in prices \\
+I, l, or vertical bar & 1 & common OCR confusion in narrow digits \\
+S or s & 5 & common OCR confusion \\
+B & 8 & common OCR confusion \\
+\bottomrule
+\end{longtable}
+
+It also attempts to avoid card attack damage being merged into a price. For example, if OCR reads a price and a nearby attack damage value as one long digit run, the parser can split likely attack-damage suffixes such as 20, 80, 120, or 330.
+
+\section{Card Image Recognition System}
+
+\subsection{Why Retrieval Instead of a Giant Classifier}
+
+The card identification problem looks like classification at first: choose one card from tens of thousands of prints. But a monolithic classifier would be the wrong default for this app.
+
+Reasons:
+
+\begin{itemize}
+  \item New cards release constantly. A classifier would need repeated retraining.
+  \item Clean reference images already exist, so nearest-neighbor retrieval is natural.
+  \item Real shop photos vary by sleeve, glare, angle, crop, lighting, and compression.
+  \item Some cards differ only by set, collector number, language, holo variant, or small text details.
+  \item The system needs top candidates and confidence evidence, not only one label.
+\end{itemize}
+
+The current design is therefore:
+
+\begin{lstlisting}
+photo -> crop/normalize -> visual fingerprints + DINOv2 embeddings
+      -> retrieve candidates -> optional OCR evidence -> rerank
+      -> canonical print UID + marketplace queries + score breakdown
+\end{lstlisting}
+
+This means the model does not have to memorize every card. The gallery stores the card identities, and the model provides a strong visual similarity representation.
+
+\subsection{Data Sources}
+
+The card matcher can build galleries from TCGdex and from the official Japanese card search. The current broad Japanese coverage uses the official Japanese card search because TCGdex did not expose image-backed records for all Japanese cards.
+
+The official Japanese gallery builder is \path{tools/card_matcher/card_matcher/official_jp.py}. It calls:
+
+\begin{lstlisting}
+https://www.pokemon-card.com/card-search/resultAPI.php
+\end{lstlisting}
+
+with \path{regulation_detail=all}, fetches all result pages, reads card IDs, card names, thumbnail paths, derives a set-like ID from the image path, and downloads images concurrently.
+
+The current official Japanese index has:
+
+\begin{itemize}
+  \item 22,863 cards in \path{ja_official_image_index.json};
+  \item 22,863 fingerprints;
+  \item 91,452 DINOv2 reference vectors;
+  \item 4 embedding variants per card;
+  \item 768 dimensions per embedding vector.
+\end{itemize}
+
+The embedding count is:
+
+\[
+22{,}863 \times 4 = 91{,}452
+\]
+
+The approximate uncompressed embedding memory is:
+
+\[
+91{,}452 \times 768 \times 4 \approx 281\text{ MB}
+\]
+
+The compressed \path{.npz} file is around 260 MB.
+
+\subsection{Card Metadata}
+
+Card metadata is represented by \path{CardMetadata} in \path{tools/card_matcher/card_matcher/models.py}. It includes:
+
+\begin{itemize}
+  \item internal ID;
+  \item name;
+  \item set ID;
+  \item set name;
+  \item local/collector ID;
+  \item image URL;
+  \item local image path;
+  \item language;
+  \item printed total;
+  \item variant class;
+  \item rarity;
+  \item regulation mark;
+  \item TCGdex ID;
+  \item PokemonTCG API ID;
+  \item marketplace URL.
+\end{itemize}
+
+The canonical print UID is:
+
+\begin{lstlisting}
+<language>:<set_id>:<collector_number_or_localId>:<variant_class>
+\end{lstlisting}
+
+For example:
+
+\begin{lstlisting}
+ja:m4:50085:standard
+\end{lstlisting}
+
+This UID is an internal stable identifier. Marketplace product IDs are useful when available, but they are not the core recognition identity.
+
+\subsection{Current Japanese Coverage Caveat}
+
+The official Japanese gallery gives broad visual coverage, but it currently stores the official card search ID as \path{local_id}. That is not always the printed collector number visible on the card. This is acceptable for visual matching and internal identity, but it is not perfect for marketplace search or user explanation.
+
+The next metadata improvement should parse or reconcile:
+
+\begin{itemize}
+  \item printed collector number;
+  \item printed set total;
+  \item exact set name;
+  \item rarity;
+  \item variant/foil type;
+  \item product-page marketplace identity where available.
+\end{itemize}
+
+\section{Image Preprocessing and Geometry}
+
+Card photo normalization is in \path{tools/card_matcher/card_matcher/image_ops.py}.
+
+\subsection{Target Size}
+
+All normalized cards are resized to:
+
+\begin{lstlisting}
+420 x 586
+\end{lstlisting}
+
+That target has the expected Pokemon card aspect ratio and gives a stable input shape for hashes, histograms, ORB, and embeddings.
+
+\subsection{Candidate Crops}
+
+For a query photo, the matcher creates several normalized variants:
+
+\begin{enumerate}
+  \item contour-based perspective crops;
+  \item a center card crop;
+  \item the full image oriented portrait.
+\end{enumerate}
+
+This is important for real phone photos. If contour detection fails because of glare or a cluttered background, the center/full variants can still sometimes match. If contour detection succeeds, OCR and embeddings get a cleaner card image.
+
+\subsection{Contour Detection}
+
+The contour pipeline uses:
+
+\begin{itemize}
+  \item grayscale conversion;
+  \item CLAHE equalization;
+  \item Gaussian blur;
+  \item Canny edge detection at multiple thresholds;
+  \item adaptive thresholding;
+  \item dilation;
+  \item contour extraction;
+  \item minimum/maximum area filtering;
+  \item aspect ratio filtering;
+  \item \path{cv2.minAreaRect};
+  \item four-point perspective transform.
+\end{itemize}
+
+The perspective transform uses OpenCV's \path{getPerspectiveTransform} and \path{warpPerspective}. This takes a quadrilateral card region and turns it into a front-facing rectangle.
+
+\subsection{Why No Trained Detector Yet}
+
+The current matcher uses OpenCV geometry rather than a trained YOLO/RT-DETR detector. This was a reasonable MVP choice because it required no labeled dataset. However, for binder pages, extreme angles, partial occlusion, and busy shop backgrounds, a trained single-class detector or oriented detector will be more robust.
+
+The codebase already has a placeholder/direction for detector work in the card matcher package, but the production path today is OpenCV crop normalization.
+
+\section{Classical Visual Features}
+
+Before DINOv2 embeddings, the matcher computes classical image similarity signals. These are still useful because they are cheap and provide complementary evidence.
+
+\subsection{Perceptual Hashes}
+
+The matcher computes:
+
+\begin{itemize}
+  \item pHash;
+  \item dHash.
+\end{itemize}
+
+The distance is a Hamming distance between hash bit patterns. The code converts the distance into a score:
+
+\[
+\text{hashScore} = \max(0, \min(1, 1 - \frac{\text{distance}}{64}))
+\]
+
+Hashes are fast and good for near-identical clean images, but they are brittle under perspective, glare, and crop changes. That is why they are only one part of the score.
+
+\subsection{Color Histogram}
+
+The matcher computes an HSV histogram with:
+
+\begin{lstlisting}
+H bins = 16
+S bins = 8
+V bins = 8
+\end{lstlisting}
+
+OpenCV histogram correlation is normalized into a 0 to 1 similarity. Histograms are useful for broad visual similarity: a green card, dark full-art card, or bright trainer card often has a recognizable color distribution. They are not sufficient for identity because many cards share similar palettes.
+
+\subsection{ORB Keypoint Matching}
+
+The rerank stage loads the candidate reference image, normalizes it, computes ORB keypoints/descriptors for query and reference, and compares descriptors with a brute-force Hamming matcher.
+
+ORB helps when there are distinctive art or text features. It is still affected by blur and glare, but it is often more identity-specific than a color histogram.
+
+\section{DINOv2 Embeddings}
+
+\subsection{What the Embedding Model Does}
+
+The current deep visual model is:
+
+\begin{lstlisting}
+facebook/dinov2-base
+\end{lstlisting}
+
+It is loaded through Hugging Face Transformers in \path{tools/card_matcher/card_matcher/embeddings.py}. It is used as a feature extractor, not as a trained Pokemon classifier.
+
+For each image, the model outputs a dense vector. The code uses:
+
+\begin{itemize}
+  \item \path{outputs.image_embeds} if available;
+  \item else \path{outputs.pooler_output};
+  \item else the CLS token from \path{last_hidden_state}.
+\end{itemize}
+
+The vector is L2-normalized:
+
+\[
+\hat{x} = \frac{x}{\|x\|_2}
+\]
+
+Similarity between a query and reference is cosine similarity:
+
+\[
+\text{cosine}(q, r) = \hat{q} \cdot \hat{r}
+\]
+
+The matcher maps cosine from roughly \([-1,1]\) into \([0,1]\):
+
+\[
+\text{embeddingScore} = \max(0, \min(1, \frac{\text{cosine} + 1}{2}))
+\]
+
+\subsection{Why DINOv2 Helps}
+
+DINOv2 is useful here because it produces robust visual features without being trained on the exact card IDs. It can recognize that two images share the same art/layout even if one is a clean reference scan and the other is a phone photo with perspective, glare, and background clutter.
+
+In this app, DINOv2 is used to answer:
+
+\begin{quote}
+"Which reference images look visually closest to this phone crop?"
+\end{quote}
+
+It does not know card names, prices, or collector numbers by itself. Those come from the metadata attached to the nearest reference image.
+
+\subsection{Reference Embedding Variants}
+
+Each reference card gets four embeddings:
+
+\begin{enumerate}
+  \item full normalized card;
+  \item 3.5 percent margin crop resized back to card size;
+  \item 7 percent margin crop resized back to card size;
+  \item artwork region crop resized back to card size.
+\end{enumerate}
+
+The artwork crop covers approximately:
+
+\begin{lstlisting}
+top:    12 percent
+bottom: 58 percent
+left:    8 percent
+right:  92 percent
+\end{lstlisting}
+
+This is a practical trick. Camera photos may crop borders, sleeves may obscure edges, and text may be blurred. The art region is often the most distinctive part of the card.
+
+\subsection{Query Embedding Variants}
+
+The query image is also represented by multiple candidates: contour crops, center crop, and full image. The model embeds these variants, compares each against the reference matrix, and keeps the maximum score per card.
+
+This means a bad crop does not automatically ruin the query as long as another crop variant is usable.
+
+\subsection{Current Search Implementation}
+
+The embedding index is stored as a NumPy \path{.npz} file:
+
+\begin{itemize}
+  \item \path{card_ids}: one card ID per vector;
+  \item \path{embeddings}: float32 matrix;
+  \item \path{model_name}: model identifier.
+\end{itemize}
+
+At match time, query embeddings are computed on CUDA if configured, then cosine similarities are computed with NumPy:
+
+\begin{lstlisting}
+reference @ query_vector
+\end{lstlisting}
+
+This is exact brute-force retrieval over the current matrix. It is simple and accurate. For larger indexes or lower latency, \path{faiss_store.py} and \path{build_faiss.py} provide the direction for FAISS-backed search.
+
+\subsection{RTX 5090 Role}
+
+The RTX 5090 is valuable in two places:
+
+\begin{itemize}
+  \item building the reference embedding index for tens of thousands of cards;
+  \item embedding query photos quickly at runtime.
+\end{itemize}
+
+The current runtime does not fine-tune DINOv2. It loads a pretrained model and runs inference. The heavy training path would only become necessary if the retrieval quality plateaus and real-photo labels show that fine-tuning or a learned metric model is needed.
+
+\section{Matcher Scoring and Reranking}
+
+\subsection{Coarse Score}
+
+For each query crop and reference fingerprint, the matcher computes:
+
+\[
+\text{coarseScore} =
+0.72 \times \text{hashScore}
++ 0.28 \times \text{histogramScore}
+\]
+
+If embeddings are available, it blends in DINOv2:
+
+\[
+\text{coarseScore}' =
+(1 - w_e) \times \text{coarseScore}
++ w_e \times \text{embeddingScore}
+\]
+
+The default embedding weight is:
+
+\[
+w_e = 0.52
+\]
+
+The code clamps that weight to at most 0.85 so embeddings cannot completely erase the classical signals.
+
+\subsection{Rerank Stage}
+
+The matcher keeps the best coarse candidates, loads their reference images, computes ORB similarity, and builds:
+
+\[
+\text{baseScore} =
+0.62 \times \text{coarseScore}
++ 0.38 \times \text{orbScore}
+\]
+
+If embeddings are available:
+
+\[
+\text{finalVisualScore} =
+(1 - w_e) \times \text{baseScore}
++ w_e \times \text{embeddingScore}
+\]
+
+This visual score becomes the input to the V2 contract reranker.
+
+\subsection{V2 Reranker}
+
+The V2 reranker is in \path{tools/card_matcher/card_matcher/reranker.py}. It scores:
+
+\begin{itemize}
+  \item visual similarity;
+  \item OCR name similarity;
+  \item collector number similarity;
+  \item set-symbol consistency;
+  \item language consistency;
+  \item variant consistency.
+\end{itemize}
+
+The default weights are:
+
+\[
+\begin{aligned}
+w_v &= 0.45\\
+w_n &= 0.15\\
+w_{num} &= 0.20\\
+w_s &= 0.10\\
+w_l &= 0.05\\
+w_{var} &= 0.05
+\end{aligned}
+\]
+
+If no OCR fields are available, the reranker switches to:
+
+\[
+w_v = 1.0
+\]
+
+and all text/variant weights become zero. This is exactly what the hosted local image matcher usually does today because card ROI OCR is optional and not passed by default from \path{scan-card.server.ts}.
+
+If collector-number OCR is enabled and confidence is high, the reranker increases the number weight because collector number is a strong print identity signal.
+
+\subsection{Unimplemented or Placeholder Evidence}
+
+Two feature channels are currently placeholders:
+
+\begin{itemize}
+  \item set-symbol score;
+  \item variant/foil score.
+\end{itemize}
+
+They are part of the contract and weighting model but currently return zero unless future classifiers populate them. This is good architecture because it keeps the output shape stable while leaving room for the next model additions.
+
+\section{Card OCR and ROI Extraction}
+
+\subsection{Purpose}
+
+Card OCR is different from price OCR. Price OCR tries to read shop stickers. Card OCR tries to read card fields:
+
+\begin{itemize}
+  \item name;
+  \item collector number;
+  \item set-symbol neighborhood;
+  \item attack text;
+  \item language/script;
+  \item variant/foil surface regions.
+\end{itemize}
+
+\subsection{Current Implementation}
+
+The card matcher has ROI helpers in:
+
+\begin{itemize}
+  \item \path{card_matcher/roi.py}
+  \item \path{card_matcher/ocr.py}
+\end{itemize}
+
+When \path{match_card_v2.py} is run with \path{--ocr}, it normalizes the best crop, sends ROIs through PaddleOCR, and emits \path{OcrFeatures}. These features can then influence reranking.
+
+\subsection{Current Runtime Limitation}
+
+The Next.js route currently calls \path{match_card_v2.py} with image/index/top/json and optional embedding/debug arguments. It does not add \path{--ocr} by default. This means the hosted path is primarily visual retrieval today. Price OCR is fully integrated; card-field OCR is available in the Python CLI but not yet always active from the web app.
+
+This is a sensible staged rollout because visual retrieval is faster and less brittle. Once OCR is validated on a real-photo set, the hosted route can enable it or make it conditional.
+
+\section{Recognition Output Contract}
+
+The V2 matcher outputs a structured JSON contract from \path{contract.py}. The key fields are:
+
+\begin{lstlisting}
+{
+  "canonical_print_uid": "...",
+  "match_confidence": 0.99,
+  "needs_review": false,
+  "language": "ja",
+  "recognized_fields": {
+    "name": "...",
+    "collector_number": "...",
+    "set_id": "...",
+    "set_name": "...",
+    "variant_class": "standard",
+    "language": "ja"
+  },
+  "source_ids": {
+    "pokemon_tcg_api_id": null,
+    "tcgdex_id": null,
+    "tcgplayer_product_id": null,
+    "tcgplayer_group_id": null,
+    "cardmarket_product_ref": null
+  },
+  "marketplaces": {
+    "north_america": {
+      "product_id": null,
+      "group_id": null,
+      "query": "...",
+      "resolution_mode": "query"
+    },
+    "europe": {
+      "product_ref": null,
+      "query": "...",
+      "resolution_mode": "query"
+    }
+  },
+  "evidence": {
+    "visual_similarity": 0.99,
+    "name_score": 0,
+    "number_score": 0,
+    "set_symbol_score": 0,
+    "language_score": 0,
+    "variant_score": 0
+  },
+  "candidates": [...]
+}
+\end{lstlisting}
+
+This contract is much better than returning one opaque string. It preserves:
+
+\begin{itemize}
+  \item the chosen print identity;
+  \item confidence;
+  \item why it matched;
+  \item backup candidates;
+  \item marketplace search strings;
+  \item whether manual review is needed.
+\end{itemize}
+
+\section{Next.js Integration for Card Scanning}
+
+\subsection{Route}
+
+\path{/api/scan-card} is implemented in \path{src/app/api/scan-card/route.ts}. It validates the file and delegates to \path{scanCardImageServer}.
+
+It sets:
+
+\begin{lstlisting}
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+\end{lstlisting}
+
+Node runtime is necessary because the route spawns the Python matcher with \path{child_process.execFile}.
+
+\subsection{Provider Order}
+
+The default provider order in \path{scan-card.server.ts} is:
+
+\begin{lstlisting}
+local-image
+gibltcg
+\end{lstlisting}
+
+Google OCR can also be used if configured, but it is not in the default order unless the provider list changes. GiblTCG requires an API key. The local image matcher is the main path.
+
+\subsection{Local Matcher Execution}
+
+The TypeScript backend writes the uploaded image to a temporary directory, builds command-line arguments, and runs:
+
+\begin{lstlisting}
+python match_card_v2.py <temp-image> --index <index> --top 8 --json
+\end{lstlisting}
+
+If an embedding index exists, it also adds:
+
+\begin{lstlisting}
+--embedding-index <embedding-index> --device cuda
+\end{lstlisting}
+
+If debug is configured, it adds:
+
+\begin{lstlisting}
+--debug-dir <directory>
+\end{lstlisting}
+
+The temporary directory is removed after execution.
+
+\subsection{Parsing and Mapping}
+
+The matcher output can be either the older V1 array shape or the V2 JSON object shape. The parser supports both. For V2 it maps each candidate into the frontend's \path{CardScanCandidate} shape, preserving:
+
+\begin{itemize}
+  \item card identity;
+  \item confidence;
+  \item canonical print UID;
+  \item recognition evidence;
+  \item marketplace query contract.
+\end{itemize}
+
+\section{Scan Result Merging}
+
+When multiple providers produce card candidates, \path{src/lib/scan-merge.ts} merges them. The logic deduplicates by card ID when a candidate has a resolved card, or by query/source when it only has text.
+
+The app only auto-selects candidates that:
+
+\begin{itemize}
+  \item are not local OCR-only;
+  \item have a resolved card;
+  \item meet the confidence threshold, default 0.8.
+\end{itemize}
+
+This protects the user from weak OCR-only guesses being selected without review.
+
+\section{Marketplace Query Strategy}
+
+The recognition system emits marketplace-ready queries rather than assuming marketplace IDs always exist.
+
+\subsection{North America}
+
+The north America query template is:
+
+\begin{lstlisting}
+<name> <set_name> <collector_number> <variant>
+\end{lstlisting}
+
+If TCGplayer product IDs or group IDs become available later, they can be stored separately. They are not required for the recognition pipeline.
+
+\subsection{Europe}
+
+The Europe/Cardmarket query template is:
+
+\begin{lstlisting}
+<name> <collector_number> <set_name>
+\end{lstlisting}
+
+If a curated Cardmarket short code exists, the query can become:
+
+\begin{lstlisting}
+<name> <short_code><collector_number>
+\end{lstlisting}
+
+This distinction matters because marketplace abbreviations are not always the same as TCGdex set IDs or PokemonTCG online codes.
+
+\section{History and Persistence}
+
+The app stores saved deals in localStorage. A saved deal contains the calculated decision, route, card info, values, price, store context, and notes. This keeps the app simple and offline-friendly from the user's perspective.
+
+There is no backend database for deals yet. That means:
+
+\begin{itemize}
+  \item history is device/browser-local;
+  \item clearing browser storage clears history;
+  \item there is no automatic sync between desktop and phone;
+  \item export/import would be a useful future feature.
+\end{itemize}
+
+\section{Testing Coverage}
+
+The TypeScript side has a focused Vitest suite:
+
+\begin{longtable}{p{0.35\linewidth} p{0.55\linewidth}}
+\toprule
+Test file & Coverage \\
+\midrule
+\path{calculations.test.ts} & Deal formulas, grading fees, warnings, thresholds, input cleanup, settings migration. \\
+\path{ocr.test.ts} & Collector extraction, set code extraction, yen parsing, attack-damage false positives, PSA cert context. \\
+\path{tcgdex.test.ts} & Search parsing, set aliases, language buckets, scoring behavior. \\
+\path{reference-prices.server.test.ts} & Price merging, Cardmarket aggregate/live behavior, Japanese pricing correction. \\
+\path{cardmarket-live.test.ts} & Sidecar request construction and live response mapping. \\
+\path{cardmarket-url.test.ts} & Cardmarket search URL and filter generation. \\
+\path{pricecharting.test.ts} & PriceCharting URL generation and HTML parsing. \\
+\path{pokeprices.test.ts} & PokePrices slug/search/helpers and Asian-card policy. \\
+\path{market-price.test.ts} & Market price field selection. \\
+\path{scan-merge.test.ts} & Candidate merge and auto-select behavior. \\
+\bottomrule
+\end{longtable}
+
+The Python card matcher also has tests for identity, catalog, official Japanese source, reranker, and contract modules under \path{tools/card_matcher/tests}.
+
+\section{Current Verification State}
+
+The app has been smoke-tested through \path{/api/scan-card} against the official Japanese index. A known official image returned the expected official Japanese candidate, a V2 canonical UID, high confidence, candidate list, and recognition contract.
+
+That verifies:
+
+\begin{itemize}
+  \item Next.js upload route works;
+  \item Python matcher can be spawned from Node;
+  \item official Japanese image index is readable;
+  \item DINOv2 embedding index is readable;
+  \item CUDA embedding inference works in the configured environment;
+  \item V2 JSON output maps into frontend scan candidates.
+\end{itemize}
+
+It does not prove real shop-photo robustness by itself. That requires a labeled photo benchmark containing camera shots, sleeves, glare, binder pages, partial crops, and hard negatives.
+
+\section{Deep Learning Inventory}
+
+\begin{longtable}{p{0.24\linewidth} p{0.24\linewidth} p{0.42\linewidth}}
+\toprule
+Model/system & Current role & Notes \\
+\midrule
+DINOv2 base & Visual embedding retrieval & Main deep visual model. Used as frozen feature extractor. No Pokemon-specific training yet. Produces 768-dimensional normalized embeddings. \\
+PaddleOCR price OCR & Price-tag OCR & Runs in \path{tools/price_ocr_server}. Uses PP-OCRv5 server detection and recognition models on GPU. \\
+PaddleOCR card ROI OCR & Optional card-field OCR & Available in \path{match_card_v2.py --ocr}. Not always enabled by the web route yet. \\
+Tesseract.js & Browser fallback OCR & Runs client-side for fallback text/price extraction. Less accurate on real photos but useful when local sidecar is unavailable. \\
+Future YOLO/RT-DETR & Detector candidate & Not trained/integrated yet. Would improve card localization on binder pages and cluttered photos. \\
+Future set-symbol classifier & Reranker evidence & Contract weight exists; classifier not implemented yet. \\
+Future holo/variant classifier & Variant resolver & Contract weight exists; classifier not implemented yet. \\
+\bottomrule
+\end{longtable}
+
+\section{What Has Not Been Trained From Scratch}
+
+No current system has been trained from scratch on a custom Pokemon dataset. The app uses:
+
+\begin{itemize}
+  \item pretrained DINOv2 for embeddings;
+  \item pretrained PaddleOCR for OCR;
+  \item classical OpenCV for geometry and local visual signals;
+  \item metadata/reference-image retrieval for identity.
+\end{itemize}
+
+This is the right first approach. Training from scratch is expensive and unnecessary until a labeled benchmark proves a specific failure mode that pretrained retrieval cannot solve.
+
+\section{Where Training May Become Useful}
+
+Training or fine-tuning becomes justified if benchmark data shows one of these problems:
+
+\begin{itemize}
+  \item OpenCV crop detection frequently misses cards in real phone photos.
+  \item Same-art or same-name reprints are visually confused and OCR is not enough.
+  \item Foil/reverse/holo variants need reliable separation from shop photos.
+  \item Japanese collector-number OCR is weak under glare/sleeves.
+  \item Binder/page mode needs multiple card detection.
+\end{itemize}
+
+The likely training targets are:
+
+\begin{enumerate}
+  \item single-class card detector, probably YOLO11 or similar, trained on real photos with boxes/quads;
+  \item set-symbol classifier trained from set symbol assets plus real crops;
+  \item finish/variant classifier trained from labeled real photos;
+  \item lightweight learned reranker trained over visual, OCR, set, language, and variant feature scores;
+  \item optional metric fine-tuning if DINOv2 retrieval is not good enough for hard negatives.
+\end{enumerate}
+
+\section{Failure Modes}
+
+\subsection{Recognition Failure Modes}
+
+Current expected failures include:
+
+\begin{itemize}
+  \item glare covering the artwork or collector number;
+  \item cards inside highly reflective sleeves/toploaders;
+  \item photo too close or cropped to only part of the card;
+  \item multiple cards in one image when the user expects one;
+  \item same artwork across languages/sets;
+  \item very similar full-art variants;
+  \item official gallery metadata not exposing printed collector numbers;
+  \item cards missing from the downloaded reference gallery.
+\end{itemize}
+
+\subsection{Price OCR Failure Modes}
+
+Expected price OCR failures include:
+
+\begin{itemize}
+  \item handwritten or stylized price tags;
+  \item price sticker over a busy holo region;
+  \item price tag color not detected by the white-tag crop heuristic;
+  \item attack damage or card numbers mistaken for price;
+  \item several prices visible at once;
+  \item discount labels where the crossed-out original price is more visible than the sale price.
+\end{itemize}
+
+\subsection{Pricing Failure Modes}
+
+Market pricing is inherently noisy. Failures include:
+
+\begin{itemize}
+  \item stale aggregate prices;
+  \item wrong language page;
+  \item wrong variant page;
+  \item thin sales history;
+  \item low sample sizes for PSA grades;
+  \item Cardmarket login/session/Cloudflare issues;
+  \item marketplace HTML layout changes.
+\end{itemize}
+
+\section{Recommended Evaluation Harness}
+
+The next serious quality step is not more guessing. It is a real-photo labeled benchmark.
+
+\subsection{Dataset}
+
+Create a dataset with:
+
+\begin{itemize}
+  \item single-card clean phone photos;
+  \item angled desk shots;
+  \item shop shelf photos;
+  \item sleeved cards;
+  \item top-loader cards;
+  \item binder pages;
+  \item Japanese cards across eras;
+  \item English cards;
+  \item cards with visible price tags;
+  \item cards without visible price tags;
+  \item non-Pokemon negatives.
+\end{itemize}
+
+\subsection{Labels}
+
+Each labeled sample should include:
+
+\begin{itemize}
+  \item image path;
+  \item expected canonical UID or official ID;
+  \item printed collector number if known;
+  \item language;
+  \item expected yen price if visible;
+  \item notes: glare, sleeve, binder, crop, low light, etc.
+\end{itemize}
+
+\subsection{Metrics}
+
+Track:
+
+\begin{itemize}
+  \item card top-1 accuracy;
+  \item card top-5 accuracy;
+  \item card top-20 accuracy;
+  \item mean reciprocal rank;
+  \item price OCR exact accuracy;
+  \item price OCR within-one-candidate accuracy;
+  \item crop success rate;
+  \item median and p95 latency;
+  \item failure reason categories.
+\end{itemize}
+
+The Python \path{benchmark.py} already reports top-1, top-5, top-20, and MRR for card matching. It should be expanded to also run price OCR and produce scenario-sliced reports.
+
+\section{Security and Operational Considerations}
+
+\subsection{Local-Only Assumption}
+
+The app currently assumes a local trusted environment. It spawns Python scripts and can access local caches. That is acceptable for a personal local tool, but it would need hardening before becoming a public service.
+
+\subsection{Upload Limits}
+
+The scan routes limit image uploads to 10 MB. This helps avoid accidental huge uploads and keeps sidecar processing bounded.
+
+\subsection{External Credentials}
+
+Credentials may be needed for:
+
+\begin{itemize}
+  \item GiblTCG API;
+  \item Google Vision API;
+  \item Cardmarket sidecar login;
+  \item optional PokePrices Supabase anon key override.
+\end{itemize}
+
+These should remain in local environment files, not in source code.
+
+\subsection{Marketplace Scraping}
+
+The Cardmarket sidecar automates a logged-in browser and parses HTML. This is fragile and should be treated as a local helper, not a guaranteed API contract. The app already degrades to aggregate pricing/search URLs when live pricing is unavailable.
+
+\section{Recommended Roadmap}
+
+\subsection{Near-Term}
+
+\begin{enumerate}
+  \item Add a labeled real-photo benchmark with at least 200 to 500 images.
+  \item Enable optional card ROI OCR in a controlled benchmark mode and measure whether it improves top-1/top-5 accuracy.
+  \item Improve official Japanese metadata by scraping/reconciling printed collector number and set total.
+  \item Add a visible recognition details/debug panel in development mode showing top candidates and evidence.
+  \item Add price OCR benchmark cases from real shop photos.
+\end{enumerate}
+
+\subsection{Medium-Term}
+
+\begin{enumerate}
+  \item Train a single-class card detector for real photos and binder pages.
+  \item Add set-symbol classifier.
+  \item Add foil/variant classifier.
+  \item Move vector search to FAISS or Qdrant once latency or filtering requires it.
+  \item Add export/import for saved deals and settings.
+\end{enumerate}
+
+\subsection{Long-Term}
+
+\begin{enumerate}
+  \item Learned reranker trained from real scan outcomes.
+  \item Fine-tuned visual embedding model if DINOv2 hard-negative performance is insufficient.
+  \item Full English and Japanese gallery with reconciled marketplace mappings.
+  \item Offline/on-device mobile mode if needed.
+  \item Multi-card binder scan workflow with batch results.
+\end{enumerate}
+
+\section{Glossary}
+
+\begin{longtable}{p{0.28\linewidth} p{0.62\linewidth}}
+\toprule
+Term & Meaning \\
+\midrule
+Canonical print UID & Internal identity string combining language, set ID, collector/local ID, and variant class. \\
+Reference gallery & Local collection of clean card images and metadata used for retrieval. \\
+DINOv2 embedding & Dense vector representation of an image produced by pretrained DINOv2. \\
+Cosine similarity & Dot product of normalized vectors; used to compare query and reference embeddings. \\
+ORB & Classical local feature detector/descriptor used for image matching. \\
+pHash/dHash & Perceptual image hashes used for cheap approximate similarity. \\
+ROI & Region of interest, such as the name box or collector-number area. \\
+Reranker & Logic that combines visual, OCR, language, set, and variant signals into a final score. \\
+Sidecar & Separate local Python service called by the Next.js app. \\
+\bottomrule
+\end{longtable}
+
+\section{Key Files}
+
+\begin{longtable}{p{0.42\linewidth} p{0.48\linewidth}}
+\toprule
+File & Why it matters \\
+\midrule
+\path{src/app/page.tsx} & Main frontend application. \\
+\path{src/app/globals.css} & Theme and liquid glass styling. \\
+\path{src/lib/calculations.ts} & Deal and route calculation. \\
+\path{src/lib/ocr.ts} & Browser OCR and yen/card text extraction helpers. \\
+\path{src/lib/price-ocr.ts} & Client wrapper for GPU price OCR route. \\
+\path{src/lib/scan-card.server.ts} & Backend card scan orchestration and Python matcher execution. \\
+\path{src/lib/reference-prices.server.ts} & Pricing source orchestration and merge logic. \\
+\path{src/lib/tcgdex.ts} & Manual card search and query parsing. \\
+\path{tools/card_matcher/match_card_v2.py} & V2 card recognition CLI and JSON contract entry point. \\
+\path{tools/card_matcher/card_matcher/image_ops.py} & Card crop normalization, hashing, histograms, ORB. \\
+\path{tools/card_matcher/card_matcher/embeddings.py} & DINOv2 embedding model and embedding index. \\
+\path{tools/card_matcher/card_matcher/matcher.py} & Visual matching pipeline. \\
+\path{tools/card_matcher/card_matcher/reranker.py} & V2 feature reranking. \\
+\path{tools/card_matcher/card_matcher/contract.py} & Recognition JSON output contract. \\
+\path{tools/card_matcher/card_matcher/official_jp.py} & Official Japanese gallery ingestion. \\
+\path{tools/price_ocr_server/server.py} & PaddleOCR price OCR sidecar. \\
+\path{tools/cardmarket_server/server.py} & Cardmarket live listing sidecar. \\
+\bottomrule
+\end{longtable}
+
+\section{Conclusion}
+
+PokeArb Japan is already structured around the right architecture for the problem. The frontend is a focused mobile deal tool. The backend separates search, pricing, card scanning, and OCR into testable modules. The card recognition stack uses the maintainable retrieval approach: reference gallery plus visual embeddings plus reranking, instead of a brittle giant classifier. The price OCR stack uses a practical hybrid of GPU OCR, tag crop detection, and yen-specific parsing.
+
+The most important next step is not to train a huge model immediately. It is to build a real-photo benchmark and measure the current system. Once failures are quantified, the app can add the right specialized models: detector, set-symbol classifier, variant classifier, or learned reranker. With the RTX 5090 and the existing MNE environment, the hardware is not the bottleneck. The bottleneck is labeled evaluation data and precise metadata reconciliation, especially for Japanese cards.
+
+\appendix
+
+\section{Appendix: Useful Commands}
+
+\subsection{Run App on Port 3000}
+
+\begin{lstlisting}
+npm run dev -- --hostname 0.0.0.0 --port 3000
+\end{lstlisting}
+
+\subsection{Build Official Japanese Gallery}
+
+\begin{lstlisting}
+conda run -n MNE python tools/card_matcher/build_official_jp_gallery.py
+\end{lstlisting}
+
+\subsection{Build DINOv2 Embeddings}
+
+\begin{lstlisting}
+conda run -n MNE python tools/card_matcher/build_embeddings.py ^
+  --index tools/card_matcher/cache/ja_official_image_index.json ^
+  --language ja_official ^
+  --device cuda ^
+  --batch-size 128 ^
+  --clean-scans
+\end{lstlisting}
+
+\subsection{Match One Photo}
+
+\begin{lstlisting}
+conda run -n MNE python tools/card_matcher/match_card_v2.py path\to\photo.jpg ^
+  --index tools/card_matcher/cache/ja_official_image_index.json ^
+  --embedding-index tools/card_matcher/cache/ja_official_embeddings_facebook_dinov2-base.npz ^
+  --device cuda ^
+  --top 8 ^
+  --json
+\end{lstlisting}
+
+\subsection{Run TypeScript Tests}
+
+\begin{lstlisting}
+npm test
+\end{lstlisting}
+
+\subsection{Run Card Matcher Benchmark}
+
+\begin{lstlisting}
+conda run -n MNE python tools/card_matcher/benchmark.py samples\labels.csv --top 20
+\end{lstlisting}
+
+\end{document}
