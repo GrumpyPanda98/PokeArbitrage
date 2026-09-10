@@ -1,0 +1,28 @@
+{
+  "source_report": "tools/card_matcher/reports/embeddings-dinov3-register/20260515-155734",
+  "summary": {
+    "generated_at": "2026-05-15T15:58:22",
+    "index": "cache\\ja_production_image_index.json",
+    "embeddings": "cache\\ja_production_embeddings_timm_vit_base_patch16_dinov3.lvd1689m_cls_register_mean.npz",
+    "cards_in_index": 23362,
+    "vectors_in_embedding_file": 93448,
+    "points": 23362,
+    "mode": "first_full_card_vector_only",
+    "reducer": {
+      "name": "UMAP",
+      "n_components": 3,
+      "n_neighbors": 20,
+      "min_dist": 0.08,
+      "metric": "cosine",
+      "random_state": null,
+      "n_jobs": 32
+    },
+    "sources": {
+      "official": 22863,
+      "pkmn.gg": 499
+    }
+  },
+  "html_sha256": "c1d5391f22e0f83d2e0d8e3521bf8218cf31b83e52208a733355d36ddf3c1763",
+  "points_json_sha256": "16a319a915ce9357d1954bef9cccfccf7aa2a47acc60321a3c28e1e15556d91b",
+  "preview": "Static rendering of the existing x/y/z coordinates, coloured by catalogue source. No embedding or UMAP recomputation."
+}

@@ -1,65 +1,34 @@
-# PokéArbitrage — Card Recognition & Price Comparison
+# PokéArbitrage — Experiments in Card Recognition
 
-A mobile-first web app for comparing Pokémon card prices while browsing Japanese card shops. Identify a card from a photo or search, confirm the print and condition, and compare the shop price with reference market values in DKK.
+An ongoing personal research project exploring image retrieval, OCR, and price matching for Japanese Pokémon cards. A mobile web interface provides a way to try the methods on shop photos and inspect where recognition or pricing breaks down.
 
-Built with Next.js, TypeScript, and optional Python image-recognition tools. This is a personal project under active development; card matching and market coverage are incomplete.
+The main question is how reliably visual features and printed information can identify an exact card, including its set, language, and variant. Price comparison is one application of that identification.
 
-## What it does
+## Exploring the embedding space
 
-- Photo-assisted identification using a local OpenCV matcher, optional DINOv2 embeddings, and OCR.
-- Search by card name, number, and set when recognition is uncertain.
-- Compare raw and graded cards using reference prices from supported providers.
-- Estimate fees, grading costs, profit, and margin; keep a local deal history.
+[![3D UMAP projection of Japanese Pokémon card image embeddings](docs/figures/embedding-space.png)](docs/embedding-space.html)
 
-Recognition results need confirmation. Prices are references, not guaranteed sale proceeds, and the calculation does not account for every cost or tax.
+**[Download the interactive 3D view](https://github.com/GrumpyPanda98/PokeArbitrage/raw/refs/heads/main/docs/embedding-space.html)** and open it in a browser to rotate the projection, search for cards, and inspect individual points. The HTML uses Plotly and card images from external hosts, so an internet connection is needed.
 
-## Run locally
+This saved experiment contains **23,362 Japanese cards**, using DINOv3 CLS and register-token features projected into three dimensions with UMAP. The figure is a way to inspect the representation; visual clusters alone do not establish identification accuracy. [Projection details](docs/figures/embedding-provenance.json).
 
-Use Node.js 22 LTS and npm. From the repository root:
+The viewer comes from a later local DINOv3 experiment. The committed matcher currently uses an OpenCV baseline with optional DINOv2 embeddings; the viewer is an accompanying research artifact rather than evidence that the DINOv3 experiment is integrated into this code.
 
-```sh
-npm ci
-npm run dev -- --hostname 127.0.0.1
-```
+## Methods explored
 
-In Windows PowerShell, use `npm.cmd run dev -- --hostname 127.0.0.1` so npm's PowerShell wrapper does not consume the forwarded flags.
+- Card detection and normalisation with OpenCV.
+- Candidate retrieval using perceptual similarity and pretrained image embeddings.
+- OCR of names, collector numbers, and other regions of interest.
+- Reranking with visual and metadata evidence, followed by matching to market-price sources.
 
-Open [localhost:3000](http://localhost:3000). The default interface passcode is `Japan` (case-sensitive). It is a client-side convenience lock, **not authentication**. Publishing this source does not make the app suitable for an unauthenticated internet deployment.
+The [architecture report](docs/pokearbitrage_architecture_report.pdf) describes the pipeline and its limitations. The [research milestones](ROADMAP.md) retain the evaluation-first direction: a labelled real-photo benchmark, analysis of errors, and targeted model changes informed by those results.
 
-No API keys are needed to start the interface. Manual entry remains available; search and reference pricing depend on external services. Optional recognition backends need their own setup and, for local matching, a downloaded image index.
+## Code and experimental environment
 
-Copy `.env.example` to `.env.local` only if you need custom settings. Keep credentials server-side and out of Git. For a hosted instance, provide real access control around the application and its API routes before connecting account-backed services.
+`src/` contains the Next.js/TypeScript interface, provider adapters, and calculations. `tools/card_matcher/` contains the Python recognition experiments; the other tools provide optional local OCR and live-pricing services.
 
-## Architecture
+This is a working research prototype with incomplete card and price coverage. Matches require confirmation, and reference prices are not guaranteed sale proceeds. Model weights, reference-image caches, personal photos, and credentials are not included.
 
-| Path | Role |
-| --- | --- |
-| `src/app/` | Mobile interface and server-side API routes |
-| `src/lib/` | Card identity, provider adapters, OCR, pricing, and calculations |
-| [`tools/card_matcher/`](tools/card_matcher/README.md) | OpenCV retrieval, optional embeddings, OCR evidence, and candidate reranking |
-| [`tools/price_ocr_server/`](tools/price_ocr_server/README.md) | Optional local price OCR service |
-| [`tools/cardmarket_server/`](tools/cardmarket_server/README.md) | Optional account-backed live-listing service |
+For local inspection, use Node.js 22 LTS and `npm ci`, then `npm run dev`. The interface's default passcode is `Japan`; this is a convenience lock, not server-side authentication. Optional backend setup is documented in each tool's README and `.env.example`. Account-backed services need real access controls before internet deployment.
 
-The committed matcher uses DINOv2 as an optional retrieval stage. Model weights, reference-image caches, personal photos, credentials, and local transaction history are not distributed here. More recent local experiments are separate from this release baseline.
-
-## Optional services
-
-The basic app runs without the Python services. Enable only what you need:
-
-- **Card matching:** follow the matcher README to create `tools/card_matcher/.venv` and build a small reference index. `LOCAL_CARD_MATCHER_PYTHON` can select another compatible Python environment.
-- **Price OCR:** the local service listens on `127.0.0.1:8765`; browser OCR/manual entry provide alternatives.
-- **Live Cardmarket:** disabled unless `CARDMARKET_LIVE_ENABLED=true`. Configure your own credentials explicitly; the service no longer reads a sibling project's environment file automatically. Check the provider's usage terms before using automation.
-
-CPU matching is available; CUDA and PaddleOCR are optional and require compatible installations. Provider availability, rate limits, languages, and condition coverage can affect results. API-based scan providers may receive the uploaded photo when explicitly configured.
-
-## Checks and milestones
-
-```sh
-npm test
-npm run lint
-npm run build
-```
-
-These check the committed app and library behaviour. They do not establish real-photo recognition accuracy or verify live marketplace accounts. See [ROADMAP.md](ROADMAP.md) for the next milestones and their acceptance criteria.
-
-[Nickolaj Ajay Atchuthan](https://atchuthan.com/)
+The available software checks are `npm test`, `npm run lint`, and `npm run build`. They check code behaviour, not real-photo recognition accuracy.

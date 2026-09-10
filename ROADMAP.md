@@ -1,8 +1,8 @@
-# Development milestones
+# Research milestones
 
-The first milestone prepares this repository for public inspection. Later milestones are planned work, not implemented features or validated results.
+The public baseline is complete. The remaining milestones organise the research around measured recognition errors; they do not represent implemented features or validated results.
 
-## 01 · Public development baseline
+## 01 · Public development baseline (complete)
 
 Publish accurate setup and architecture documentation, portable local configuration, dependency updates, and automated app checks. Acceptance: tests, lint and build pass; source and history have been reviewed for credentials; local in-progress work is preserved.
 
