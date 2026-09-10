@@ -22,7 +22,6 @@ import {
   Clock3,
   ExternalLink,
   Home,
-  LockKeyhole,
   MoreHorizontal,
   RotateCcw,
   Save,
@@ -89,7 +88,6 @@ import type {
 } from "@/lib/types";
 
 const STORAGE_KEYS = {
-  unlocked: "pokearb.unlocked.v1",
   settings: "pokearb.settings.v2",
   theme: "pokearb.theme.v1",
   liquidBackground: "pokearb.liquid-background.v1",
@@ -97,7 +95,6 @@ const STORAGE_KEYS = {
   storeContext: "pokearb.store-context.v1",
 };
 
-const PASSCODE = process.env.NEXT_PUBLIC_POKEARB_PASSCODE ?? "Japan";
 const EMPTY_HISTORY: SavedDeal[] = [];
 
 const EMPTY_REFERENCE_STATE: ReferenceState = {
@@ -246,10 +243,6 @@ const NAV_ITEMS: Array<{ screen: Screen; label: string; icon: LucideIcon }> = [
 
 export default function App() {
   const [mounted, setMounted] = useState(false);
-  const [unlocked, setUnlocked] = useLocalStorageState(
-    STORAGE_KEYS.unlocked,
-    false,
-  );
   const [storedSettings, setSettings] = useLocalStorageState(
     STORAGE_KEYS.settings,
     DEFAULT_SETTINGS,
@@ -288,9 +281,7 @@ export default function App() {
     DEFAULT_STORE_CONTEXT,
   );
   const [screen, setScreen] = useState<Screen>("home");
-  const [passcode, setPasscode] = useState("");
   const [notice, setNotice] = useState("");
-  const [confirmLockOpen, setConfirmLockOpen] = useState(false);
   const [form, setForm] = useState<DealForm>(EMPTY_DEAL_FORM);
   const [selectedCard, setSelectedCard] = useState<CardSearchResult | undefined>();
   const [reference, setReference] =
@@ -411,25 +402,6 @@ export default function App() {
     );
   }
 
-  function unlock(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (passcode === PASSCODE) {
-      setUnlocked(true);
-      setPasscode("");
-      setNotice("");
-      return;
-    }
-
-    setNotice("Wrong passcode.");
-  }
-
-  function lock() {
-    setUnlocked(false);
-    setPasscode("");
-    setNotice("");
-    setConfirmLockOpen(false);
-  }
-
   function patchForm(field: keyof DealForm, value: string) {
     if (field === "languageBucket") {
       const bucket = value as LanguageBucket;
@@ -528,21 +500,6 @@ export default function App() {
     setSettings((current) => ({ ...current, [field]: parsed }));
   }
 
-  if (!unlocked) {
-    return (
-      <ThemeContext.Provider value={theme}>
-        <PrivateGate
-          notice={notice}
-          passcode={passcode}
-          setPasscode={setPasscode}
-          style={theme === "liquid" ? liquidBackgroundStyle : undefined}
-          theme={theme}
-          unlock={unlock}
-        />
-      </ThemeContext.Provider>
-    );
-  }
-
   return (
     <ThemeContext.Provider value={theme}>
       <LiquidMotionContext.Provider value={liquidMotion}>
@@ -553,10 +510,7 @@ export default function App() {
           style={theme === "liquid" ? liquidBackgroundStyle : undefined}
         >
           <div className="app-content mx-auto min-h-screen max-w-[428px] px-4 pb-[calc(14rem+env(safe-area-inset-bottom))] pt-[calc(1rem+env(safe-area-inset-top))]">
-            <AppHeader
-              onRequestLock={() => setConfirmLockOpen(true)}
-              setScreen={setScreen}
-            />
+            <AppHeader setScreen={setScreen} />
 
             {notice ? (
               <div className="mb-3 rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm font-semibold text-amber">
@@ -613,15 +567,6 @@ export default function App() {
             <StickyDecisionBar calculation={calculation} form={form} />
           ) : null}
           <BottomNav screen={screen} setScreen={setScreen} />
-          {confirmLockOpen ? (
-            <ConfirmSheet
-              body="You will need to enter the passcode again."
-              confirmLabel="Lock"
-              onCancel={() => setConfirmLockOpen(false)}
-              onConfirm={lock}
-              title="Lock app?"
-            />
-          ) : null}
         </main>
       </LiquidMotionContext.Provider>
     </ThemeContext.Provider>
@@ -850,94 +795,11 @@ function LiquidGlassSurface({
   );
 }
 
-function PrivateGate({
-  notice,
-  passcode,
-  setPasscode,
-  style,
-  theme,
-  unlock,
-}: {
-  notice: string;
-  passcode: string;
-  setPasscode: (value: string) => void;
-  style?: CSSProperties;
-  theme: ThemeName;
-  unlock: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  return (
-    <main
-      className="app-shell grid min-h-screen place-items-center px-4 py-8"
-      data-theme={theme}
-      style={style}
-    >
-      <CardPanel className="w-full max-w-[428px] p-4">
-        <h1 className="mb-4 text-lg font-semibold">PokéArb Japan</h1>
-
-        <form className="grid gap-3" onSubmit={unlock}>
-          <Field
-            autoFocus
-            label="Passcode"
-            onChange={setPasscode}
-            type="password"
-            value={passcode}
-          />
-          <button className="button-primary h-11" type="submit">
-            Unlock
-          </button>
-          {notice ? (
-            <p className="text-sm font-semibold text-red">{notice}</p>
-          ) : null}
-        </form>
-      </CardPanel>
-    </main>
-  );
-}
-
-function AppHeader({
-  onRequestLock,
-  setScreen,
-}: {
-  onRequestLock: () => void;
-  setScreen: (screen: Screen) => void;
-}) {
-  const isLiquidTheme = useIsLiquidTheme();
-  const lockButtonRef = useRef<HTMLButtonElement | null>(null);
-
+function AppHeader({ setScreen }: { setScreen: (screen: Screen) => void }) {
   return (
     <header className="mb-3 flex items-center justify-between">
-      <button
-        className="text-left"
-        onClick={() => setScreen("home")}
-        type="button"
-      >
-        <p className="text-base font-semibold leading-6">
-          PokéArb Japan
-        </p>
-      </button>
-      <button
-        aria-label="Lock app"
-        className={
-          isLiquidTheme
-            ? "liquid-lock-button liquid-glass-panel icon-button"
-            : "icon-button"
-        }
-        onClick={onRequestLock}
-        ref={(node) => {
-          lockButtonRef.current = node;
-        }}
-        type="button"
-      >
-        {isLiquidTheme ? (
-          <LiquidGlassSurface
-            cornerRadius={18}
-            intensity="chrome"
-            mouseContainer={lockButtonRef}
-          />
-        ) : null}
-        <span className={isLiquidTheme ? "liquid-glass-content grid place-items-center" : undefined}>
-          <LockKeyhole size={18} />
-        </span>
+      <button className="text-left" onClick={() => setScreen("home")} type="button">
+        <p className="text-base font-semibold leading-6">CardScope</p>
       </button>
     </header>
   );
@@ -2743,105 +2605,6 @@ function BottomNavContent({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function ConfirmSheet({
-  body,
-  confirmLabel,
-  onCancel,
-  onConfirm,
-  title,
-}: {
-  body: string;
-  confirmLabel: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-  title: string;
-}) {
-  const isLiquidTheme = useIsLiquidTheme();
-  const surfaceRef = useRef<HTMLElement | null>(null);
-
-  return (
-    <div className="fixed inset-0 z-[70] grid place-items-end bg-black/60 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-      <section
-        className={`w-full max-w-[428px] rounded-lg border border-border bg-elevated p-4 ${
-          isLiquidTheme ? "liquid-glass-panel" : ""
-        }`}
-        ref={(node) => {
-          surfaceRef.current = node;
-        }}
-      >
-        {isLiquidTheme ? (
-          <>
-            <LiquidGlassSurface
-              cornerRadius={24}
-              intensity="chrome"
-              mouseContainer={surfaceRef}
-            />
-            <div className="liquid-glass-content">
-              <ConfirmSheetContent
-                body={body}
-                confirmLabel={confirmLabel}
-                onCancel={onCancel}
-                onConfirm={onConfirm}
-                title={title}
-              />
-            </div>
-          </>
-        ) : (
-          <ConfirmSheetContent
-            body={body}
-            confirmLabel={confirmLabel}
-            onCancel={onCancel}
-            onConfirm={onConfirm}
-            title={title}
-          />
-        )}
-      </section>
-    </div>
-  );
-}
-
-function ConfirmSheetContent({
-  body,
-  confirmLabel,
-  onCancel,
-  onConfirm,
-  title,
-}: {
-  body: string;
-  confirmLabel: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-  title: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold">{title}</h2>
-          <p className="mt-1 text-sm text-muted">{body}</p>
-        </div>
-        <button
-          aria-label="Cancel"
-          className="icon-button"
-          onClick={onCancel}
-          type="button"
-        >
-          <X size={16} />
-        </button>
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button className="button-secondary h-10" onClick={onCancel} type="button">
-          Cancel
-        </button>
-        <button className="button-danger h-10" onClick={onConfirm} type="button">
-          <LockKeyhole size={16} />
-          {confirmLabel}
-        </button>
-      </div>
     </div>
   );
 }

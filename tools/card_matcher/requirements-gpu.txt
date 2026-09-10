@@ -1,7 +1,4 @@
-# Install these in an environment that already has CUDA PyTorch.
-# On this PC, the Conda env `MNE` already has PyTorch + CUDA for the RTX 5090.
-transformers>=4.45.0
+# Install a PyTorch build appropriate for your CPU or CUDA version first.
+transformers>=4.56.0,<6
+timm>=1.0.20,<2
 safetensors>=0.4.5
-# Optional V2 components:
-#   conda install -n MNE -c conda-forge faiss-cpu
-#   python -m pip install paddleocr

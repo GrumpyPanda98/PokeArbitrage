@@ -25,7 +25,8 @@ def main() -> None:
     parser.add_argument("--language", default="ja", help="Index language code.")
     parser.add_argument("--top", type=int, default=8, help="Number of candidates to return.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
-    parser.add_argument("--embedding-index", help="Optional DINOv2 embedding .npz index.")
+    parser.add_argument("--embedding-index", help="DINOv3 embedding .npz index.")
+    parser.add_argument("--embedding-pooling", choices=["auto", "cls_register_mean", "register_mean"], help="Override pooling for a legacy index without stored pooling metadata.")
     parser.add_argument("--model", help="Vision model name for the embedding index.")
     parser.add_argument("--device", default="auto", help="auto, cuda, or cpu for embeddings.")
     parser.add_argument("--embedding-weight", type=float, default=0.52)
@@ -43,6 +44,7 @@ def main() -> None:
         embedding_model_name=args.model,
         device=args.device,
         embedding_weight=args.embedding_weight,
+        embedding_pooling=args.embedding_pooling,
     )
     matches = matcher.match(args.image, top=max(args.top, 20))
     ocr = read_ocr_features(source_image, args.ocr)

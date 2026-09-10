@@ -216,7 +216,7 @@ async function fetchFirstPokePricesHtml(
         )}/card/${candidate.cardSlug}`,
         {
           headers: {
-            "user-agent": "PokéArb Japan private deal checker",
+            "user-agent": "CardScope research prototype",
           },
         },
       );

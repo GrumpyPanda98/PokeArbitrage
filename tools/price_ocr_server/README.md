@@ -1,4 +1,4 @@
-# PokéArb Local GPU Price OCR
+# CardScope Local GPU Price OCR
 
 This optional service runs on a local machine with a compatible PaddleOCR environment. The iPhone PWA uploads the scan photo to Next.js, and Next.js forwards the image to this local service at `http://127.0.0.1:8765/ocr-price`.
 

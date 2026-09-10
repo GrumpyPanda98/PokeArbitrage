@@ -1,130 +1,48 @@
-# Local Card Matcher / Identifier V2
+# CardScope · DINOv3 recognition experiments
 
-Research prototype for local Pokemon card image identification. V1 built a local reference-image cache from TCGdex Japanese card images, then matched iPhone photos with a two-stage image similarity pipeline:
+Local image retrieval and identification for Japanese Pokémon cards. The representation uses `timm/vit_base_patch16_dinov3.lvd1689m` with mean pooling over the CLS token and four register tokens, followed by L2 normalisation. Cosine retrieval is combined with OpenCV evidence and optional OCR/metadata reranking.
 
-1. Coarse rank by perceptual hashes and color histograms.
-2. Re-rank the best candidates with ORB keypoint matching.
+Reference indexing stores full-card, margin-cropped, and artwork views. The embedding-space figure selects the first full-card vector for each card. Pooling metadata is saved in new embedding indexes so query and reference vectors use the same representation.
 
-V2 keeps that baseline but adds the production-shaped contract:
+## Environment
 
-1. Normalize/crop the card with OpenCV.
-2. Optionally OCR high-value ROIs with PaddleOCR.
-3. Retrieve visual candidates with the image index and optional DINOv2 embeddings.
-4. Rerank with visual, name, collector number, language, set, and variant evidence.
-5. Return `canonical_print_uid`, score breakdowns, candidates, and marketplace search queries.
+Run these commands from `tools/card_matcher/`. Python 3.12 is used for the matcher checks. Install a PyTorch build suitable for your CPU or CUDA version, then:
 
-## Setup
-
-```powershell
-cd tools/card_matcher
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```sh
+python -m pip install -r requirements.txt -r requirements-gpu.txt
 ```
 
-## Optional RTX 5090 Reranker
+Model weights are obtained through Hugging Face and follow the model's own access and licence terms. Once cached, local inference can run offline. The published setup was checked with Transformers 5.8 and timm 1.0.27, including a CPU inference using the cached DINOv3 model.
 
-The baseline matcher is OpenCV-only so it is easy to run. The following optional commands assume you have created a compatible Conda environment named `MNE` with CUDA PyTorch. Install the matcher extras into that environment, then build a DINOv2 embedding index:
+## Build and query an index
 
-```powershell
-$conda = "$env:USERPROFILE\anaconda3\Scripts\conda.exe"
-& $conda run -n MNE python -m pip install -r requirements.txt -r requirements-gpu.txt
-& $conda run -n MNE python build_index.py --language ja --set-id SV2a
-& $conda run -n MNE python build_embeddings.py --language ja --model facebook/dinov2-base --device cuda
+```sh
+python build_official_jp_gallery.py --help
+python build_embeddings.py --index cache/ja_image_index.json --clean-scans --device cuda
+python match_card_v2.py photo.jpg --index cache/ja_image_index.json --embedding-index cache/ja_embeddings_timm_vit_base_patch16_dinov3.lvd1689m_cls_register_mean.npz --device cuda --json
 ```
 
-Then pass the embedding index when matching:
+Use `--device cpu` when CUDA is unavailable. The gallery and reference images must exist before embedding. `build_embeddings.py` defaults to DINOv3 and `cls_register_mean`; `--embedding-pooling` selects another supported pooling mode. Different pooling modes receive separate default filenames.
 
-```powershell
-& $conda run -n MNE python match_card.py path\to\photo.jpg --embedding-index cache\ja_embeddings_facebook_dinov2-base.npz --device cuda
+For a historical index that predates stored pooling metadata, pass `--embedding-pooling cls_register_mean` explicitly when that is how its vectors were generated. An index without pooling metadata retains its original automatic behaviour unless overridden.
+
+The Next.js adapter uses the DINOv3 index filename above by default. Set `LOCAL_CARD_MATCHER_INDEX` and `LOCAL_CARD_MATCHER_EMBEDDING_INDEX` for a different catalogue or saved index. `LOCAL_CARD_MATCHER_EMBEDDING_POOLING` supplies an explicit override for historical indexes.
+
+OCR is optional and enabled with `--ocr` when PaddleOCR is installed. `--debug-dir` writes the selected crops for inspection.
+
+## Inspect a saved projection
+
+```sh
+python -m pip install -r requirements-viz.txt
+python render_embedding_space.py --points reports/experiment/points.json --metadata-dir cache/metadata/official_jp/details --output-dir reports/viewer
 ```
 
-For camera-shot debugging, write the crops that the matcher actually compared:
+The renderer reuses the saved coordinates, labels card types from cached official catalogue pages, and writes a dark preview plus a standalone interactive HTML file. It does not compute embeddings or refit UMAP. Missing card-type labels remain Unknown.
 
-```powershell
-& $conda run -n MNE python match_card.py path\to\photo.jpg --embedding-index cache\ja_embeddings_facebook_dinov2-base.npz --device cuda --debug-dir reports\last-crops
+## Checks and limits
+
+```sh
+python -m pytest tests
 ```
 
-When the Next.js app is hosted with `LOCAL_CARD_MATCHER_DEBUG_DIR` set, phone scans write the same normalized crops there.
-
-## V2 Catalog And Gallery
-
-The canonical identity is:
-
-```text
-<language>:<set_id>:<collector_number_or_localId>:<variant_class>
-```
-
-Collector numbers stay as strings so leading zeroes, promo prefixes, and slash totals are preserved.
-
-```powershell
-& $conda run -n MNE python sync_catalog.py --language ja --latest-first --max-sets 24
-& $conda run -n MNE python build_gallery.py --language ja --latest-first --max-sets 24
-& $conda run -n MNE python build_embeddings.py --language ja --model facebook/dinov2-base --device cuda
-```
-
-FAISS is supported as the production vector-store direction, but the MVP matcher still works with the `.npz` DINOv2 matrix if FAISS is not installed.
-
-```powershell
-& $conda run -n MNE python build_faiss.py --language ja --model facebook/dinov2-base
-```
-
-TCGdex does not expose image-backed detail records for every Japanese print. For broad Japanese coverage, build from the official Japanese card search instead:
-
-```powershell
-& $conda run -n MNE python build_official_jp_gallery.py
-& $conda run -n MNE python build_embeddings.py --index cache\ja_official_image_index.json --language ja_official --device cuda --batch-size 128 --clean-scans
-```
-
-## Build A Japanese Reference Index
-
-Start small while testing. This downloads set metadata and card images into `cache/`, which is ignored by git.
-
-```powershell
-.\.venv\Scripts\python.exe build_index.py --language ja --set-id SV2a
-```
-
-For a larger index, pass more `--set-id` values, or use `--max-sets 12` to walk Japanese sets until it finds sets with downloadable card art.
-
-## Match One Photo
-
-```powershell
-.\.venv\Scripts\python.exe match_card.py path\to\photo.jpg --top 10
-```
-
-The output includes the card id, name, set, collector number, image URL, and score diagnostics.
-
-For the V2 output contract:
-
-```powershell
-& $conda run -n MNE python match_card_v2.py path\to\photo.jpg --index cache\ja_image_index.json --embedding-index cache\ja_embeddings_facebook_dinov2-base.npz --device cuda --json
-```
-
-Add `--ocr` after PaddleOCR is installed to include ROI-aware name, collector-number, attack, and language evidence.
-
-## Benchmark Real Photos
-
-Create `samples/labels.csv` from `samples/labels.example.csv`, then run:
-
-```powershell
-.\.venv\Scripts\python.exe benchmark.py samples\labels.csv --top 5
-```
-
-The benchmark reports top-1, top-5, top-20, and MRR. The first useful target is top-5 accuracy on real iPhone shop photos.
-
-To create rectified crops and ROI images for OCR/detector labeling:
-
-```powershell
-& $conda run -n MNE python export_training_data.py samples\labels.csv --output-dir reports\training-export
-```
-
-## Next.js Integration
-
-`/api/scan-card` calls `match_card_v2.py` by default through `LOCAL_CARD_MATCHER_SCRIPT`. From the repository root, the following PowerShell example enables phone testing on a trusted local network. Set `POKEARB_DEV_ORIGINS` to your development machine's hostname or LAN IP when needed; do not expose the Python services.
-
-```powershell
-$env:LOCAL_CARD_MATCHER_CACHE_DIR=Join-Path $PWD 'tools/card_matcher/cache'
-$env:LOCAL_CARD_MATCHER_DEBUG_DIR=Join-Path $PWD 'tools/card_matcher/reports/last-crops'
-$env:LOCAL_CARD_MATCHER_TOP='8'
-npm.cmd run dev -- --hostname 0.0.0.0 --port 3000
-```
+These software checks cover retrieval helpers, metadata, and pooling consistency. The saved projection is an exploratory result; real-photo recognition accuracy has not been established by these checks. Reference caches, model weights, and private photos are not distributed with this repository.

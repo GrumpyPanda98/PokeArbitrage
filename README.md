@@ -1,34 +1,32 @@
-# PokéArbitrage — Experiments in Card Recognition
+# CardScope — Pokémon Card Recognition with DINOv3
 
-An ongoing personal research project exploring image retrieval, OCR, and price matching for Japanese Pokémon cards. A mobile web interface provides a way to try the methods on shop photos and inspect where recognition or pricing breaks down.
+An ongoing research project exploring how visual embeddings identify Japanese Pokémon cards from photographs. DINOv3 provides the image representation; OpenCV, OCR, and catalogue metadata help distinguish the exact set, printing, and variant. A mobile web interface connects recognition experiments with price comparison.
 
-The main question is how reliably visual features and printed information can identify an exact card, including its set, language, and variant. Price comparison is one application of that identification.
+## Inside the embedding space
 
-## Exploring the embedding space
+[![Japanese Pokémon cards in DINOv3 feature space, coloured by card type](docs/figures/embedding-space.png)](docs/embedding-space.html)
 
-[![3D UMAP projection of Japanese Pokémon card image embeddings](docs/figures/embedding-space.png)](docs/embedding-space.html)
+**[Download the interactive view](https://github.com/GrumpyPanda98/CardScope-Pokemon-Recognition/raw/refs/heads/main/docs/embedding-space.html)** and open it in a browser. Rotate the projection, highlight a card or set, filter by card type, or switch between type, set, and source colours. Use **Full extent** to see outliers beyond the initial close view. Plotly and catalogue images require an internet connection.
 
-**[Download the interactive 3D view](https://github.com/GrumpyPanda98/PokeArbitrage/raw/refs/heads/main/docs/embedding-space.html)** and open it in a browser to rotate the projection, search for cards, and inspect individual points. The HTML uses Plotly and card images from external hosts, so an internet connection is needed.
+The saved experiment contains **23,362 cards** represented by **DINOv3 ViT-B/16**, using the mean of the CLS token and four register tokens. The full-card vectors are projected into three dimensions with UMAP and cosine distance. The original coordinates are retained.
 
-This saved experiment contains **23,362 Japanese cards**, using DINOv3 CLS and register-token features projected into three dimensions with UMAP. The figure is a way to inspect the representation; visual clusters alone do not establish identification accuracy. [Projection details](docs/figures/embedding-provenance.json).
+Colours distinguish Pokémon, Supporters, Items, Pokémon Tools, Stadiums, and Energy cards using labels from the official catalogue. The 536 cards without verified labels remain **Unknown**. The static figure shows 22,660 points in a closer view; all 23,362 are available interactively. [Figure provenance](docs/figures/embedding-provenance.json).
 
-The viewer comes from a later local DINOv3 experiment. The committed matcher currently uses an OpenCV baseline with optional DINOv2 embeddings; the viewer is an accompanying research artifact rather than evidence that the DINOv3 experiment is integrated into this code.
+The projection is useful for inspecting how card layouts organise the representation. Separation in UMAP is not a measurement of recognition accuracy.
 
-## Methods explored
+## Recognition experiments
 
-- Card detection and normalisation with OpenCV.
-- Candidate retrieval using perceptual similarity and pretrained image embeddings.
-- OCR of names, collector numbers, and other regions of interest.
-- Reranking with visual and metadata evidence, followed by matching to market-price sources.
+- **Representation:** pretrained DINOv3 embeddings, L2 normalisation, and CLS/register-token pooling.
+- **Retrieval:** cosine similarity against reference cards, with full-card and cropped reference views.
+- **Identification:** OpenCV image evidence, OCR of names and collector numbers, and metadata-based reranking.
+- **Application:** matching identified prints to market-price sources and inspecting results through a Next.js interface.
 
-The [architecture report](docs/pokearbitrage_architecture_report.pdf) describes the pipeline and its limitations. The [research milestones](ROADMAP.md) retain the evaluation-first direction: a labelled real-photo benchmark, analysis of errors, and targeted model changes informed by those results.
+`tools/card_matcher/` contains the Python experiments, including the DINOv3 implementation and the [viewer renderer](tools/card_matcher/render_embedding_space.py). `src/` contains the interface, provider adapters, and price calculations. The [architecture report](docs/pokearbitrage_architecture_report.pdf) records the broader project design.
 
-## Code and experimental environment
+## Local exploration
 
-`src/` contains the Next.js/TypeScript interface, provider adapters, and calculations. `tools/card_matcher/` contains the Python recognition experiments; the other tools provide optional local OCR and live-pricing services.
+Use Node.js 22 LTS, run `npm ci`, then `npm run dev`. The app opens directly, with no passcode. DINOv3 setup and commands are in the [matcher README](tools/card_matcher/README.md); optional services are configured through `.env.example`.
 
-This is a working research prototype with incomplete card and price coverage. Matches require confirmation, and reference prices are not guaranteed sale proceeds. Model weights, reference-image caches, personal photos, and credentials are not included.
+This remains a research prototype with incomplete card and price coverage. Model weights, reference-image caches, personal photos, and credentials are not included. Account-backed services are intended for local use.
 
-For local inspection, use Node.js 22 LTS and `npm ci`, then `npm run dev`. The interface's default passcode is `Japan`; this is a convenience lock, not server-side authentication. Optional backend setup is documented in each tool's README and `.env.example`. Account-backed services need real access controls before internet deployment.
-
-The available software checks are `npm test`, `npm run lint`, and `npm run build`. They check code behaviour, not real-photo recognition accuracy.
+Software checks: `npm test`, `npm run lint`, and `npm run build`. These check code behaviour, not real-photo recognition accuracy.

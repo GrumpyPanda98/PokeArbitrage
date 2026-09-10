@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -11,9 +12,14 @@ from tqdm import tqdm
 
 from .image_ops import load_bgr_image, normalize_card_image, normalize_card_image_candidates, orient_portrait, resize_card
 from .index_store import CardIndex
+from .roi import extract_rois
 
 
-DEFAULT_EMBEDDING_MODEL = "facebook/dinov2-base"
+LEGACY_EMBEDDING_MODEL = "facebook/dinov2-base"
+DEFAULT_EMBEDDING_MODEL = "timm/vit_base_patch16_dinov3.lvd1689m"
+DEFAULT_DINOV3_EMBEDDING_MODEL = "timm/vit_base_patch16_dinov3.lvd1689m"
+DEFAULT_EMBEDDING_BACKEND = "dinov3"
+REGION_VARIANT_NAMES = ("name", "collector_number", "set_symbol", "attack_text")
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,7 @@ class EmbeddingIndex:
     card_ids: list[str]
     embeddings: np.ndarray
     model_name: str
+    pooling: str = "auto"
 
     @classmethod
     def load(cls, path: str | Path) -> "EmbeddingIndex":
@@ -29,6 +36,7 @@ class EmbeddingIndex:
             card_ids=[str(item) for item in data["card_ids"].tolist()],
             embeddings=data["embeddings"].astype(np.float32),
             model_name=str(data["model_name"].tolist()),
+            pooling=str(data["pooling"].tolist()) if "pooling" in data else "auto",
         )
 
     def save(self, path: str | Path) -> None:
@@ -39,6 +47,7 @@ class EmbeddingIndex:
             card_ids=np.asarray(self.card_ids),
             embeddings=self.embeddings.astype(np.float32),
             model_name=np.asarray(self.model_name),
+            pooling=np.asarray(self.pooling),
         )
 
 
@@ -47,6 +56,7 @@ class GpuEmbeddingModel:
         self,
         model_name: str = DEFAULT_EMBEDDING_MODEL,
         device: str = "auto",
+        pooling: str = "cls_register_mean",
     ) -> None:
         try:
             import torch
@@ -65,6 +75,7 @@ class GpuEmbeddingModel:
             resolved_device = "cpu"
         self.device = resolved_device
         self.model_name = model_name
+        self.pooling = normalize_embedding_pooling(pooling)
         self.model = AutoModel.from_pretrained(model_name).to(self.device).eval()
 
     def embed_paths(self, paths: Iterable[str | Path], batch_size: int = 16) -> np.ndarray:
@@ -108,7 +119,21 @@ class GpuEmbeddingModel:
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.inference_mode():
             outputs = self.model(**inputs)
-        if hasattr(outputs, "image_embeds"):
+        if self.pooling == "cls_register_mean":
+            hidden_state = getattr(outputs, "last_hidden_state", None)
+            if hidden_state is None or hidden_state.shape[1] < 5:
+                raise RuntimeError(
+                    "cls_register_mean pooling needs a model output with CLS plus register tokens.",
+                )
+            embeddings = hidden_state[:, :5].mean(dim=1)
+        elif self.pooling == "register_mean":
+            hidden_state = getattr(outputs, "last_hidden_state", None)
+            if hidden_state is None or hidden_state.shape[1] < 5:
+                raise RuntimeError(
+                    "register_mean pooling needs a model output with register tokens.",
+                )
+            embeddings = hidden_state[:, 1:5].mean(dim=1)
+        elif hasattr(outputs, "image_embeds"):
             embeddings = outputs.image_embeds
         elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
             embeddings = outputs.pooler_output
@@ -123,6 +148,7 @@ def build_embedding_index(
     model: GpuEmbeddingModel,
     batch_size: int = 16,
     clean_scans: bool = False,
+    region_level: bool = False,
 ) -> EmbeddingIndex:
     valid_cards = [card for card in index.cards if Path(card.image_path).exists()]
     card_ids: list[str] = []
@@ -141,7 +167,7 @@ def build_embedding_index(
     for card in tqdm(valid_cards, desc="Embedding reference cards"):
         image = load_bgr_image(card.image_path)
         normalized = resize_card(orient_portrait(image)) if clean_scans else normalize_card_image(image)[0]
-        for variant in reference_embedding_variants(normalized):
+        for variant in reference_embedding_variants(normalized, include_rois=region_level):
             id_batch.append(card.id)
             image_batch.append(variant)
             if len(image_batch) >= batch_size:
@@ -158,6 +184,7 @@ def build_embedding_index(
         card_ids=card_ids,
         embeddings=embeddings,
         model_name=model.model_name,
+        pooling=model.pooling,
     )
 
 
@@ -172,16 +199,64 @@ def cosine_similarities(query: np.ndarray, reference: np.ndarray) -> np.ndarray:
     return reference @ query_vector
 
 
-def default_embedding_path(cache_dir: str | Path, language: str, model_name: str) -> Path:
+def default_embedding_path(cache_dir: str | Path, language: str, model_name: str, pooling: str = "auto") -> Path:
+    return default_embedding_path_for_mode(cache_dir, language, model_name, pooling=pooling)
+
+
+def default_embedding_path_for_mode(
+    cache_dir: str | Path,
+    language: str,
+    model_name: str,
+    region_level: bool = False,
+    pooling: str = "auto",
+) -> Path:
     safe_model = model_name.replace("/", "_").replace("\\", "_")
-    return Path(cache_dir) / f"{language}_embeddings_{safe_model}.npz"
+    pooling = normalize_embedding_pooling(pooling)
+    suffix = "" if pooling == "auto" else f"_{pooling}"
+    suffix += "_regions" if region_level else ""
+    return Path(cache_dir) / f"{language}_embeddings_{safe_model}{suffix}.npz"
+
+
+def embedding_model_name_for_backend(
+    backend: str,
+    explicit_model_name: str | None = None,
+) -> str:
+    if explicit_model_name:
+        return explicit_model_name
+
+    normalized = normalize_embedding_backend(backend)
+    if normalized == "dinov3":
+        return os.getenv("LOCAL_CARD_MATCHER_DINOV3_MODEL", DEFAULT_DINOV3_EMBEDDING_MODEL)
+    return os.getenv("LOCAL_CARD_MATCHER_DINOV2_MODEL", LEGACY_EMBEDDING_MODEL)
+
+
+def normalize_embedding_backend(value: str | None) -> str:
+    normalized = str(value or DEFAULT_EMBEDDING_BACKEND).strip().lower()
+    if normalized not in {"dinov2", "dinov3"}:
+        raise ValueError(f"Unknown embedding backend: {value}")
+    return normalized
+
+
+def normalize_embedding_pooling(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"cls_register_mean", "register_mean"}:
+        return normalized
+    return "auto"
 
 
 def to_pil(image: np.ndarray) -> Image.Image:
     return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
 
-def reference_embedding_variants(image: np.ndarray) -> list[np.ndarray]:
+def reference_embedding_variants(image: np.ndarray, include_rois: bool = False) -> list[np.ndarray]:
+    return embedding_variants(image, include_rois=include_rois)
+
+
+def query_embedding_variants(image: np.ndarray, include_rois: bool = False) -> list[np.ndarray]:
+    return embedding_variants(image, include_rois=include_rois)
+
+
+def embedding_variants(image: np.ndarray, include_rois: bool = False) -> list[np.ndarray]:
     variants = [image]
     height, width = image.shape[:2]
     margins = [0.035, 0.07]
@@ -197,4 +272,11 @@ def reference_embedding_variants(image: np.ndarray) -> list[np.ndarray]:
     art_right = int(width * 0.92)
     artwork = image[art_top:art_bottom, art_left:art_right]
     variants.append(cv2.resize(artwork, (width, height), interpolation=cv2.INTER_AREA))
+    if include_rois:
+        rois = extract_rois(image)
+        for roi_name in REGION_VARIANT_NAMES:
+            roi = rois.get(roi_name)
+            if not roi or roi.image.size == 0:
+                continue
+            variants.append(cv2.resize(roi.image, (width, height), interpolation=cv2.INTER_AREA))
     return variants

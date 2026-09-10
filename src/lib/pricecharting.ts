@@ -80,7 +80,7 @@ async function fetchPriceChartingValues(
     try {
       const response = await fetch(url, {
         headers: {
-          "user-agent": "PokéArb Japan private deal checker",
+          "user-agent": "CardScope research prototype",
         },
       });
       if (!response.ok) {
@@ -108,7 +108,7 @@ async function fetchPriceChartingValues(
     try {
       const response = await fetch(searchUrl, {
         headers: {
-          "user-agent": "PokéArb Japan private deal checker",
+          "user-agent": "CardScope research prototype",
         },
       });
       if (response.ok) {
@@ -175,7 +175,7 @@ async function fetchPriceChartingSearchCandidateUrl(
   try {
     const response = await fetch(buildPriceChartingSearchUrl(card), {
       headers: {
-        "user-agent": "PokéArb Japan private deal checker",
+        "user-agent": "CardScope research prototype",
       },
     });
     if (!response.ok) {

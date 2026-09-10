@@ -1,4 +1,4 @@
-# PokéArb Local Cardmarket Pricing
+# CardScope Local Cardmarket Pricing
 
 This optional local service logs into Cardmarket and returns the cheapest live listing matching the selected language and minimum condition.
 
@@ -39,4 +39,4 @@ CARDMARKET_SIDECAR_URL=http://127.0.0.1:8766/cardmarket/raw-price
 CARDMARKET_SIDECAR_TIMEOUT_MS=12000
 ```
 
-If this service is offline or blocked, PokéArb falls back to TCGdex Cardmarket aggregate pricing.
+If this service is offline or blocked, CardScope falls back to TCGdex Cardmarket aggregate pricing.

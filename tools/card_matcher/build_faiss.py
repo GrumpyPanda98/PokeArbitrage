@@ -8,11 +8,12 @@ from card_matcher.faiss_store import FaissVectorStore
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build a FAISS vector index from a DINOv2 .npz file.")
+    parser = argparse.ArgumentParser(description="Build a FAISS vector index from a DINOv3 .npz file.")
     parser.add_argument("--cache-dir", default="cache", help="Local cache directory.")
     parser.add_argument("--language", default="ja", help="Language code.")
     parser.add_argument("--model", default=DEFAULT_EMBEDDING_MODEL, help="Embedding model name.")
     parser.add_argument("--embedding-index", help="Input .npz embedding index.")
+    parser.add_argument("--embedding-pooling", default="cls_register_mean", choices=["auto", "cls_register_mean", "register_mean"])
     parser.add_argument("--output", help="Output .faiss path.")
     args = parser.parse_args()
 
@@ -20,6 +21,7 @@ def main() -> None:
         args.cache_dir,
         args.language,
         args.model,
+        pooling=args.embedding_pooling,
     )
     output = Path(args.output) if args.output else embedding_path.with_suffix(".faiss")
     store = FaissVectorStore(EmbeddingIndex.load(embedding_path))

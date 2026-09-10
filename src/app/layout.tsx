@@ -2,14 +2,14 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PokéArb Japan",
-  description: "Private Pokémon card deal checker for Japan card shops.",
-  applicationName: "PokéArb Japan",
+  title: "CardScope",
+  description: "Pokémon card recognition and price comparison research.",
+  applicationName: "CardScope",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "PokéArb",
+    title: "CardScope",
   },
   icons: {
     icon: "/icon-192.png",

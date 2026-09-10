@@ -149,7 +149,7 @@ async function scanWithLocalImageMatcher(file: File): Promise<LocalImageScanResu
     path.join(cacheDir, "ja_image_index.json");
   const embeddingIndexPath =
     process.env.LOCAL_CARD_MATCHER_EMBEDDING_INDEX ??
-    path.join(cacheDir, "ja_embeddings_facebook_dinov2-base.npz");
+    path.join(cacheDir, "ja_embeddings_timm_vit_base_patch16_dinov3.lvd1689m_cls_register_mean.npz");
 
   await assertPathExists(pythonPath, "Local matcher Python was not found");
   const matcherScript = process.env.LOCAL_CARD_MATCHER_SCRIPT ?? "match_card_v2.py";
@@ -182,6 +182,10 @@ async function scanWithLocalImageMatcher(file: File): Promise<LocalImageScanResu
         "--device",
         process.env.LOCAL_CARD_MATCHER_DEVICE ?? "cuda",
       );
+    }
+
+    if (process.env.LOCAL_CARD_MATCHER_EMBEDDING_POOLING) {
+      args.push("--embedding-pooling", process.env.LOCAL_CARD_MATCHER_EMBEDDING_POOLING);
     }
 
     if (process.env.LOCAL_CARD_MATCHER_DEBUG_DIR) {

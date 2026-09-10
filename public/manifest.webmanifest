@@ -1,6 +1,6 @@
 {
-  "name": "PokéArb Japan",
-  "short_name": "PokéArb",
+  "name": "CardScope",
+  "short_name": "CardScope",
   "description": "Private in-store Pokémon card deal checker for Japan.",
   "start_url": "/",
   "scope": "/",

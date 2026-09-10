@@ -1,5 +1,4 @@
 {
-  "source_report": "tools/card_matcher/reports/embeddings-dinov3-register/20260515-155734",
   "summary": {
     "generated_at": "2026-05-15T15:58:22",
     "index": "cache\\ja_production_image_index.json",
@@ -22,7 +21,39 @@
       "pkmn.gg": 499
     }
   },
-  "html_sha256": "c1d5391f22e0f83d2e0d8e3521bf8218cf31b83e52208a733355d36ddf3c1763",
   "points_json_sha256": "16a319a915ce9357d1954bef9cccfccf7aa2a47acc60321a3c28e1e15556d91b",
-  "preview": "Static rendering of the existing x/y/z coordinates, coloured by catalogue source. No embedding or UMAP recomputation."
+  "html_sha256": "7f083392d9177e865e281a3a30164bb9a92d314da8c9c2dbbea4ee753955cbf1",
+  "coordinate_transform": "None: existing x/y/z retained exactly; no embedding or UMAP fit.",
+  "card_types": {
+    "Pok\u00e9mon": 17064,
+    "Item": 1997,
+    "Supporter": 1944,
+    "Stadium": 361,
+    "Energy": 959,
+    "Pok\u00e9mon Tool": 501,
+    "Unknown": 536
+  },
+  "category_sources": {
+    "official-hp-and-attacks": 17064,
+    "official-detail-heading": 5762,
+    "unavailable": 536
+  },
+  "category_method": "Explicit headings or HP/attack sections in locally cached official catalogue pages. Missing labels remain Unknown.",
+  "focused_bounds": [
+    [
+      -1.8331914716959,
+      12.611838212013245
+    ],
+    [
+      -3.9894444596767427,
+      13.62943516254425
+    ],
+    [
+      -2.4739709079265593,
+      12.267544455528256
+    ]
+  ],
+  "focused_points": 22660,
+  "view": "Dark categorical preview. Axis bounds at the 0.5th and 99.5th percentiles; HTML Full extent restores all points.",
+  "renderer": "tools/card_matcher/render_embedding_space.py"
 }

@@ -39,6 +39,7 @@ class CardMatcher:
         embedding_model_name: str | None = None,
         device: str = "auto",
         embedding_weight: float = 0.52,
+        embedding_pooling: str | None = None,
     ) -> "CardMatcher":
         embedding_index = (
             EmbeddingIndex.load(embedding_index_path) if embedding_index_path else None
@@ -47,6 +48,7 @@ class CardMatcher:
             GpuEmbeddingModel(
                 model_name=embedding_model_name or embedding_index.model_name,
                 device=device,
+                pooling=embedding_pooling or embedding_index.pooling,
             )
             if embedding_index
             else None
