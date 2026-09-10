@@ -7,16 +7,16 @@ The iPhone PWA calls Next.js, and Next.js calls this service at `http://127.0.0.
 ## Setup
 
 ```powershell
-cd C:\Users\nicko\Documents\GitHub\PokéArbitrage\tools\cardmarket_server
+cd tools/cardmarket_server
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-The service also reads the existing sibling
-`C:\Users\nicko\Documents\GitHub\Cardmarket_watcher\.env` file. To override
-that, add credentials to the repo `.env.local` or to this folder's `.env`:
+Add credentials to the repository `.env.local` or this folder's `.env`.
+To use a separate private file, set `CARDMARKET_ENV_FILE` to its absolute path.
+The service does not automatically read credentials from other projects.
 
 ```env
 CM_USERNAME=your_cardmarket_email
@@ -28,7 +28,7 @@ POKEARB_CM_GAME=Pokemon
 ## Run
 
 ```powershell
-cd C:\Users\nicko\Documents\GitHub\PokéArbitrage\tools\cardmarket_server
+cd tools/cardmarket_server
 .\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8766
 ```
 

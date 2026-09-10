@@ -16,16 +16,15 @@ V2 keeps that baseline but adds the production-shaped contract:
 ## Setup
 
 ```powershell
-cd C:\Users\nicko\Documents\GitHub\PokéArbitrage-card-id-v2\tools\card_matcher
-$py = "$env:USERPROFILE\.pyenv\pyenv-win\versions\3.12.2\python.exe"
-& $py -m venv .venv
+cd tools/card_matcher
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## Optional RTX 5090 Reranker
 
-The baseline matcher is OpenCV-only so it is easy to run. This PC also has an `MNE` Conda environment with CUDA PyTorch for the RTX 5090. Install the matcher extras into that environment, then build a DINOv2 embedding index:
+The baseline matcher is OpenCV-only so it is easy to run. The following optional commands assume you have created a compatible Conda environment named `MNE` with CUDA PyTorch. Install the matcher extras into that environment, then build a DINOv2 embedding index:
 
 ```powershell
 $conda = "$env:USERPROFILE\anaconda3\Scripts\conda.exe"
@@ -121,11 +120,11 @@ To create rectified crops and ROI images for OCR/detector labeling:
 
 ## Next.js Integration
 
-`/api/scan-card` calls `match_card_v2.py` by default through `LOCAL_CARD_MATCHER_SCRIPT`. To test from a phone, host only on port 3000:
+`/api/scan-card` calls `match_card_v2.py` by default through `LOCAL_CARD_MATCHER_SCRIPT`. From the repository root, the following PowerShell example enables phone testing on a trusted local network. Set `POKEARB_DEV_ORIGINS` to your development machine's hostname or LAN IP when needed; do not expose the Python services.
 
 ```powershell
-$env:LOCAL_CARD_MATCHER_CACHE_DIR='C:\Users\nicko\Documents\GitHub\PokéArbitrage-card-id\tools\card_matcher\cache'
-$env:LOCAL_CARD_MATCHER_DEBUG_DIR='C:\Users\nicko\Documents\GitHub\PokéArbitrage-card-id-v2\tools\card_matcher\reports\last-crops'
+$env:LOCAL_CARD_MATCHER_CACHE_DIR=Join-Path $PWD 'tools/card_matcher/cache'
+$env:LOCAL_CARD_MATCHER_DEBUG_DIR=Join-Path $PWD 'tools/card_matcher/reports/last-crops'
 $env:LOCAL_CARD_MATCHER_TOP='8'
-npm run dev -- --hostname 0.0.0.0 --port 3000
+npm.cmd run dev -- --hostname 0.0.0.0 --port 3000
 ```

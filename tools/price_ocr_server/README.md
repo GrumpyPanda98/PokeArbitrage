@@ -1,14 +1,13 @@
 # PokéArb Local GPU Price OCR
 
-This optional service runs on the PC with the RTX 5090. The iPhone PWA uploads the scan photo to Next.js, and Next.js forwards the image to this local service at `http://127.0.0.1:8765/ocr-price`.
+This optional service runs on a local machine with a compatible PaddleOCR environment. The iPhone PWA uploads the scan photo to Next.js, and Next.js forwards the image to this local service at `http://127.0.0.1:8765/ocr-price`.
 
 ## Setup
 
 Use Python 3.12, not the default Python 3.13.
 
 ```powershell
-$py = "$env:USERPROFILE\.pyenv\pyenv-win\versions\3.12.2\python.exe"
-& $py -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -26,7 +25,7 @@ That wheel is the PaddleOCR-documented Windows package for Python 3.12 on NVIDIA
 ## Run
 
 ```powershell
-cd C:\Users\nicko\Documents\GitHub\PokéArbitrage\tools\price_ocr_server
+cd tools/price_ocr_server
 .\.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8765
 ```
 

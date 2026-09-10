@@ -135,7 +135,12 @@ async function scanWithLocalImageMatcher(file: File): Promise<LocalImageScanResu
     path.join(/*turbopackIgnore: true*/ process.cwd(), "tools", "card_matcher");
   const pythonPath =
     process.env.LOCAL_CARD_MATCHER_PYTHON ??
-    path.join(os.homedir(), "anaconda3", "envs", "MNE", "python.exe");
+    path.join(
+      matcherDir,
+      ".venv",
+      process.platform === "win32" ? "Scripts" : "bin",
+      process.platform === "win32" ? "python.exe" : "python",
+    );
   const cacheDir =
     process.env.LOCAL_CARD_MATCHER_CACHE_DIR ??
     path.join(/*turbopackIgnore: true*/ matcherDir, "cache");

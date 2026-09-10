@@ -52,3 +52,8 @@ next-env.d.ts
 
 # local browser profiles/session state
 tools/**/.cardmarket-profile/
+
+# Share only the placeholder configuration, never credentials or local captures.
+!.env.example
+/data/
+/logs/

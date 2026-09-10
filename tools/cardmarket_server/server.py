@@ -28,7 +28,9 @@ from playwright.sync_api import sync_playwright
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT_DIR / ".env.local")
-load_dotenv(ROOT_DIR.parent / "Cardmarket_watcher" / ".env")
+# A separate credentials file is opt-in; never borrow a sibling project's account.
+if os.getenv("CARDMARKET_ENV_FILE"):
+    load_dotenv(os.environ["CARDMARKET_ENV_FILE"])
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
 CARDMARKET_BASE_URL = "https://www.cardmarket.com"

@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["192.168.1.100", "100.97.168.126"],
+  allowedDevOrigins: (process.env.POKEARB_DEV_ORIGINS ?? "")
+    .split(",")
+    .map((hostname) => hostname.trim())
+    .filter(Boolean),
   images: {
     remotePatterns: [
       {
